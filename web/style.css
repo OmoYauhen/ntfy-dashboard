@@ -99,7 +99,7 @@ main { padding: 10px 20px 24px; }
 .tile:disabled { cursor: default; }
 .tile img {
   /* Size images from the viewport height so all five meal rows fit on one screen. */
-  width: 100%; height: clamp(56px, calc((100vh - 140px) / 5 - 80px), 190px);
+  width: 100%; height: clamp(40px, calc((100vh - 140px) / 5 - 80px), 190px);
   object-fit: cover; background: var(--line); display: block;
 }
 .tile .name {
