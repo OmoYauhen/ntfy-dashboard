@@ -59,10 +59,9 @@ function tile(day, meal, dish, index) {
       "aria-pressed": String(selected),
       "aria-label": dish.name,
       onclick: (e) => choose(day, meal, dish, e.currentTarget),
-      onmouseenter: (e) => showDetails(dish, meal, selected, e.currentTarget),
-      onmouseleave: hideDetails,
-      onfocus: (e) => showDetails(dish, meal, selected, e.currentTarget),
-      onblur: hideDetails,
+      // Mouse only: on touch screens a tap should just pick the dish.
+      onpointerenter: (e) => e.pointerType === "mouse" && scheduleZoom(day, meal, dish, e.currentTarget),
+      onpointerleave: (e) => { if (!$("zoom").contains(e.relatedTarget)) closeZoom(); },
     },
     el("img", { src: imageUrl(dish.image), alt: "", loading: "lazy" }),
     index < 9 ? el("kbd", {}, String(index + 1)) : null,
@@ -72,27 +71,98 @@ function tile(day, meal, dish, index) {
   );
 }
 
-function showDetails(dish, meal, selected, anchor) {
-  const pop = $("popover");
-  pop.replaceChildren(...[
-    el("img", { src: imageUrl(dish.image, "V-MEDIUM-RETINA"), alt: "" }),
-    el("h3", {}, dish.name),
-    selected && !meal.user_selected ? el("p", { class: "hint" }, "Default dish, not chosen yet. Enter keeps it.") : null,
-    dish.history ? el("p", { class: "hint" }, `You had it ${dish.history.eaten}×, last on ${dish.history.last_eaten}.`) : null,
-    dishDetails(dish),
-  ].filter(Boolean));
-  pop.hidden = false;
-  const r = anchor.getBoundingClientRect();
-  const w = pop.offsetWidth;
-  const h = pop.offsetHeight;
-  const left = r.right + 12 + w < innerWidth ? r.right + 12 : Math.max(8, r.left - 12 - w);
-  const top = Math.min(Math.max(8, r.top), innerHeight - h - 8);
-  pop.style.left = `${left}px`;
-  pop.style.top = `${Math.max(8, top)}px`;
+// Hovering a tile grows it into a bigger card on top: the card starts exactly over the tile
+// (scaled down, clipped to the tile's height) and animates to full size, revealing the details.
+const ZOOM_DELAY_MS = 120;
+const ZOOM_MS = 260;
+const ZOOM_WIDTH = 400;
+const zoom = { timer: null, anchor: null, hideTimer: null };
+
+function scheduleZoom(day, meal, dish, anchor) {
+  clearTimeout(zoom.timer);
+  // Moving from one open card straight onto another tile opens it without delay.
+  zoom.timer = setTimeout(() => openZoom(day, meal, dish, anchor), zoom.anchor ? 0 : ZOOM_DELAY_MS);
 }
 
-function hideDetails() {
-  $("popover").hidden = true;
+/// Transform + clip that make the (unscaled) card cover exactly `rect`.
+function tileTransform(rect, left, top, width, height) {
+  const scale = rect.width / width;
+  const visible = rect.height / scale;
+  return {
+    transform: `translate(${rect.left - left}px, ${rect.top - top}px) scale(${scale})`,
+    clipPath: `inset(0 0 ${Math.max(0, height - visible)}px 0 round ${10 / scale}px)`,
+  };
+}
+
+function openZoom(day, meal, dish, anchor) {
+  if (!anchor.isConnected) return;
+  const card = $("zoom");
+  clearTimeout(zoom.hideTimer);
+  const selected = meal.selected === dish.id;
+
+  const img = el("img", { src: imageUrl(dish.image), alt: "" });
+  const sharp = new Image();
+  sharp.onload = () => { if (img.isConnected) img.src = sharp.src; };
+  sharp.src = imageUrl(dish.image, "MEDIUM-RETINA");
+
+  let action = null;
+  if (day.editable) {
+    action = !selected ? "Click to choose" : meal.user_selected ? "✓ Your choice" : "Default dish · click to keep it";
+  }
+  card.replaceChildren(...[
+    el("div", { class: "zoom-media" }, img, badges(dish)),
+    el("div", { class: "zoom-head" },
+      el("h3", {}, dish.name),
+      el("p", { class: "facts" }, facts(dish)),
+      dish.history ? el("p", { class: "hint" }, `You had it ${dish.history.eaten}×, last on ${dish.history.last_eaten}.`) : null),
+    dishDetails(dish),
+    action ? el("p", { class: "zoom-action" }, action) : null,
+  ].filter(Boolean));
+  card.className = [selected && "selected", selected && !meal.user_selected && "default", !day.editable && "locked"]
+    .filter(Boolean).join(" ");
+  card.onclick = day.editable ? () => { closeZoom(true); choose(day, meal, dish, null); } : null;
+  card.onpointerleave = (e) => { if (e.relatedTarget !== anchor) closeZoom(); };
+
+  // Final geometry: wider than the tile, image centred over the tile's image, kept on screen.
+  const r = anchor.getBoundingClientRect();
+  const width = Math.min(innerWidth - 16, Math.max(ZOOM_WIDTH, r.width * 1.5));
+  card.style.transition = "none";
+  card.style.transform = "none";
+  card.style.clipPath = "none";
+  card.style.width = `${width}px`;
+  card.hidden = false;
+  const height = card.offsetHeight;
+  const imageGrowth = (width - r.width) * 0.75;
+  const left = Math.min(Math.max(8, r.left + r.width / 2 - width / 2), innerWidth - width - 8);
+  const top = Math.min(Math.max(8, r.top - imageGrowth / 2), innerHeight - height - 8);
+  card.style.left = `${left}px`;
+  card.style.top = `${Math.max(8, top)}px`;
+
+  const reopen = zoom.anchor === anchor;
+  zoom.anchor = anchor;
+  zoom.geometry = { left, top: Math.max(8, top), width, height };
+  if (reopen) return;
+  Object.assign(card.style, tileTransform(r, left, Math.max(8, top), width, height));
+  card.style.opacity = "0.4";
+  card.getBoundingClientRect(); // commit the start state before animating
+  card.style.transition = "";
+  Object.assign(card.style, { transform: "none", clipPath: "inset(0 0 0 0 round 14px)", opacity: "1" });
+}
+
+/// Shrinks the card back onto its tile (or just fades it when `fade`, e.g. after a click).
+function closeZoom(fade = false) {
+  clearTimeout(zoom.timer);
+  const card = $("zoom");
+  const anchor = zoom.anchor;
+  zoom.anchor = null;
+  if (card.hidden || !anchor) return;
+  if (!fade && anchor.isConnected) {
+    const { left, top, width, height } = zoom.geometry;
+    Object.assign(card.style, tileTransform(anchor.getBoundingClientRect(), left, top, width, height));
+  }
+  card.style.opacity = "0";
+  clearTimeout(zoom.hideTimer);
+  zoom.hideTimer = setTimeout(() => { if (!zoom.anchor) card.hidden = true; }, ZOOM_MS);
 }
 
 function renderDay() {
@@ -138,7 +208,7 @@ function renderDay() {
 function show(index) {
   state.current = Math.max(0, Math.min(index, state.days.length - 1));
   state.row = firstUnpicked(currentDay());
-  hideDetails();
+  closeZoom(true);
   renderDay();
 }
 
@@ -227,10 +297,13 @@ async function load() {
 $("prev").addEventListener("click", () => show(state.current - 1));
 $("next").addEventListener("click", () => show(state.current + 1));
 $("keep-rest").addEventListener("click", keepRest);
+addEventListener("blur", () => closeZoom(true));
+addEventListener("resize", () => closeZoom(true));
 
 // Keyboard flow: 1-9 picks a dish in the active meal, Enter keeps its current dish,
 // ↑/↓ moves between meals, ←/→ between days.
 document.addEventListener("keydown", (e) => {
+  closeZoom(true);
   if (e.ctrlKey || e.metaKey || e.altKey || !state.days.length) return;
   const day = currentDay();
   const meal = day.meals[state.row];
