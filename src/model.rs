@@ -12,7 +12,7 @@ const DEMO_OPTIONS: usize = 7;
 #[derive(Serialize, Clone, Debug)]
 pub struct Day {
     pub date: String,
-    /// Last moment the menu for this day can still be changed (ISO, from the API).
+    /// Last moment the menu for this day can still be changed (RFC 3339 with offset).
     pub change_deadline: Option<String>,
     pub editable: bool,
     /// When NTFY publishes the menu for this day; before that the meals have no dishes.
@@ -145,16 +145,13 @@ pub fn days_from_deliveries(data: &Value, now: chrono::DateTime<chrono::FixedOff
     for delivery in data["results"].as_array().into_iter().flatten() {
         let Some(delivery_id) = delivery["id"].as_u64() else { continue };
         let date = delivery["date"].as_str().unwrap_or_default().get(..10).unwrap_or_default().to_string();
-        let deadline = delivery["products_change_to"].as_str().map(str::to_string);
-        let editable = deadline
-            .as_deref()
-            .and_then(parse_api_time)
-            .is_some_and(|d| d > now);
+        let deadline = delivery["products_change_to"].as_str().and_then(parse_api_time);
+        let editable = deadline.is_some_and(|d| d > now);
         let day = days.entry(date.clone()).or_insert_with(|| Day {
             date,
-            change_deadline: deadline.clone(),
+            change_deadline: deadline.map(|d| d.to_rfc3339()),
             editable,
-            menu_from: delivery["show_menu_from"].as_str().map(str::to_string),
+            menu_from: delivery["show_menu_from"].as_str().and_then(parse_api_time).map(|d| d.to_rfc3339()),
             meals: vec![],
         });
         day.editable |= editable;
@@ -333,6 +330,7 @@ mod tests {
         let days = days_from_deliveries(&data, now());
         assert_eq!(days.iter().map(|d| d.date.as_str()).collect::<Vec<_>>(), ["2026-11-06", "2026-11-07"]);
         assert!(!days[0].editable);
+        assert_eq!(days[1].change_deadline.as_deref(), Some("2026-11-05T23:59:59+01:00"));
         let day = &days[1];
         assert!(day.editable);
         assert_eq!(day.meals.iter().map(|m| m.item_id).collect::<Vec<_>>(), [10, 11]);

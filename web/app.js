@@ -1,6 +1,10 @@
 "use strict";
 
 const ADVANCE_DELAY_MS = 700;
+const REFRESH_EVERY_MS = 15 * 60 * 1000;
+const PRELOAD_CONCURRENCY = 6;
+const URGENT_MS = 24 * 3600 * 1000;
+const SEEN_KEY = "ntfy-seen-menus";
 
 // `row` is the meal that keyboard picks go to.
 const state = { days: [], current: 0, row: 0 };
@@ -10,6 +14,29 @@ const hasMenu = (day) => day.meals.some((m) => m.options.length);
 const isOpen = (day) => day.editable && hasMenu(day) && !isPicked(day);
 const pickedCount = (day) => day.meals.filter((m) => m.user_selected).length;
 const currentDay = () => state.days[state.current];
+const msLeft = (day) => (day.change_deadline ? new Date(day.change_deadline) - Date.now() : Infinity);
+const isUrgent = (day) => day.editable && hasMenu(day) && !isPicked(day) && msLeft(day) < URGENT_MS;
+
+/// "2d 5h", "5h 20m", "12m".
+function formatLeft(ms) {
+  const minutes = Math.max(0, Math.floor(ms / 60000));
+  const d = Math.floor(minutes / 1440);
+  const h = Math.floor((minutes % 1440) / 60);
+  const m = minutes % 60;
+  if (d) return `${d}d ${h}h`;
+  if (h) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+// Days whose menu the user has looked at; a day with a menu not in here is marked "new".
+const seen = new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || "[]"));
+function markSeen(day) {
+  if (!hasMenu(day) || seen.has(day.date)) return;
+  seen.add(day.date);
+  localStorage.setItem(SEEN_KEY, JSON.stringify([...seen]));
+}
+const isNew = (day) => hasMenu(day) && day.editable && !isPicked(day) && !seen.has(day.date);
+
 const firstUnpicked = (day) => Math.max(0, day.meals.findIndex((m) => !m.user_selected));
 
 function renderDays() {
@@ -18,14 +45,17 @@ function renderDays() {
       el(
         "button",
         {
-          class: [i === state.current && "current", isPicked(day) && "done", !(day.editable && hasMenu(day)) && "locked"]
-            .filter(Boolean).join(" "),
-          title: day.editable ? "" : "Menu can no longer be changed",
+          class: [i === state.current && "current", isPicked(day) && "done", !(day.editable && hasMenu(day)) && "locked",
+            isUrgent(day) && "urgent", isNew(day) && "new"].filter(Boolean).join(" "),
+          title: [isNew(day) && "New menu.", !day.editable ? "Menu can no longer be changed"
+            : day.change_deadline ? `Can be changed for ${formatLeft(msLeft(day))} more` : ""].filter(Boolean).join(" "),
           onclick: () => show(i),
         },
         dateLabel(day.date, { weekday: "short", day: "numeric", month: "numeric" }),
         el("span", { class: "count" },
-          !day.editable ? "locked" : !hasMenu(day) ? "no menu" : `${pickedCount(day)}/${day.meals.length}`),
+          !day.editable ? "locked"
+            : !hasMenu(day) ? "no menu"
+            : `${pickedCount(day)}/${day.meals.length}${isUrgent(day) ? ` · ${formatLeft(msLeft(day))}` : ""}`),
       ),
     ),
   );
@@ -62,7 +92,7 @@ function tile(day, meal, dish, index) {
       "aria-label": dish.name,
       onclick: (e) => choose(day, meal, dish, e.currentTarget),
     },
-    el("img", { src: imageUrl(dish.image), alt: "", loading: "lazy" }),
+    el("img", { src: imageUrl(dish.image), alt: "" }),
     index < 9 ? el("kbd", {}, String(index + 1)) : null,
     badges(dish),
     // A span, since a button can't contain another button.
@@ -186,8 +216,16 @@ function renderDay() {
     status.textContent = day.menu_from
       ? `Menu not published yet, available from ${dateLabel(day.menu_from, { weekday: "long", day: "numeric", month: "long" })}`
       : "Menu not published yet";
-  } else if (isPicked(day)) status.textContent = "All meals chosen";
-  else status.textContent = `${pickedCount(day)} of ${day.meals.length} meals chosen`;
+  } else {
+    const progress = isPicked(day) ? "All meals chosen" : `${pickedCount(day)} of ${day.meals.length} meals chosen`;
+    status.textContent = progress;
+    if (day.change_deadline) {
+      const at = new Date(day.change_deadline).toLocaleString(undefined,
+        { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+      status.append(" · ", el("span", { class: `deadline${isUrgent(day) ? " urgent" : ""}`, title: `Locks ${at}` },
+        `locks in ${formatLeft(msLeft(day))}`));
+    }
+  }
 
   const kcal = day.meals.reduce((sum, m) => sum + (m.options.find((d) => d.id === m.selected)?.kcal ?? 0), 0);
   $("day-kcal").textContent = kcal ? `${Math.round(kcal)} kcal` : "";
@@ -216,6 +254,7 @@ function renderDay() {
 function show(index) {
   state.current = Math.max(0, Math.min(index, state.days.length - 1));
   state.row = firstUnpicked(currentDay());
+  markSeen(currentDay());
   closeZoom(true);
   renderDay();
 }
@@ -278,29 +317,84 @@ async function keepRest() {
   else afterPick(day, wasPicked);
 }
 
-async function load() {
+/// Loads (or refreshes) the plan. A refresh keeps the day being viewed and the active meal.
+async function load({ refresh = false } = {}) {
   const msg = $("message");
-  msg.hidden = false;
-  msg.textContent = "Loading menu…";
+  if (!refresh) {
+    msg.hidden = false;
+    msg.textContent = "Loading menu…";
+  }
   try {
     const resp = await fetch("/api/days");
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || resp.statusText);
+    state.loadedAt = Date.now();
     $("mode").hidden = !(data.demo || data.read_only);
     $("mode").textContent = data.demo ? "demo" : "read-only";
     $("history-link").hidden = data.demo;
+
+    // First visit ever: treat what's already published as seen, so only later days show as new.
+    if (!localStorage.getItem(SEEN_KEY)) data.days.forEach(markSeen);
+    const viewing = refresh ? currentDay()?.date : null;
+    const row = state.row;
+    const newMenus = refresh ? data.days.filter((d) => isNew(d) && !state.days.some((o) => o.date === d.date && hasMenu(o))) : [];
     state.days = data.days;
     if (!state.days.length) {
+      msg.hidden = false;
       msg.textContent = "No upcoming deliveries with a menu to choose.";
       return;
     }
     msg.hidden = true;
-    const firstOpen = state.days.findIndex(isOpen);
-    show(firstOpen === -1 ? 0 : firstOpen);
+    const keep = state.days.findIndex((d) => d.date === viewing);
+    if (keep !== -1) {
+      state.current = keep;
+      state.row = Math.min(row, currentDay().meals.length - 1);
+      renderDay();
+    } else {
+      const firstOpen = state.days.findIndex(isOpen);
+      show(firstOpen === -1 ? 0 : firstOpen);
+    }
+    if (newMenus.length) toast(`New menu: ${newMenus.map((d) => dateLabel(d.date, { weekday: "short", day: "numeric" })).join(", ")}`);
+    preloadImages();
   } catch (err) {
+    if (refresh) return; // keep showing the last plan; the next refresh will try again
     msg.textContent = `Could not load deliveries: ${err.message}`;
   }
 }
+
+/// Warms the browser cache with every tile photo, nearest days first, so switching days is instant.
+const preloaded = new Set();
+function preloadImages() {
+  const byDistance = state.days
+    .map((day, i) => ({ day, distance: Math.abs(i - state.current) }))
+    .sort((a, b) => a.distance - b.distance);
+  const queue = byDistance
+    .flatMap(({ day }) => day.meals.flatMap((m) => m.options.map((d) => imageUrl(d.image))))
+    .filter((url) => url && !preloaded.has(url) && preloaded.add(url));
+  const next = () => {
+    const url = queue.shift();
+    if (!url) return;
+    const img = new Image();
+    img.onload = img.onerror = next;
+    img.src = url;
+  };
+  for (let i = 0; i < PRELOAD_CONCURRENCY; i++) next();
+}
+
+// New menus are published daily and the server syncs hourly: refresh the open page now and then,
+// and when coming back to it after a while. Skip while a details card is open.
+function refreshIfStale(maxAge) {
+  if (!zoom.anchor && state.loadedAt && Date.now() - state.loadedAt > maxAge) load({ refresh: true });
+}
+setInterval(() => refreshIfStale(REFRESH_EVERY_MS - 1000), REFRESH_EVERY_MS);
+document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && refreshIfStale(5 * 60 * 1000));
+
+// Keep countdowns current, and lock a day the moment its deadline passes.
+setInterval(() => {
+  if (!state.days.length) return;
+  for (const day of state.days) if (day.editable && msLeft(day) <= 0) day.editable = false;
+  if (!zoom.anchor) renderDay();
+}, 30 * 1000);
 
 $("prev").addEventListener("click", () => show(state.current - 1));
 $("next").addEventListener("click", () => show(state.current + 1));

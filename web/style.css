@@ -58,6 +58,13 @@ h1 { font-size: 18px; margin: 0; white-space: nowrap; }
 #days button .count { display: block; font-size: 11px; color: var(--muted); }
 #days button.done .count { color: var(--accent); }
 #days button.locked { opacity: .55; }
+#days button.urgent .count { color: var(--warn); font-weight: 600; }
+#days button.new { position: relative; }
+/* Menu published since you last looked at that day. */
+#days button.new::after {
+  content: ""; position: absolute; top: 4px; right: 4px;
+  width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+}
 #days button.current { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 
 main { padding: 10px 20px 24px; }
@@ -71,6 +78,7 @@ main { padding: 10px 20px 24px; }
 #day-head button.action { width: auto; height: auto; border-radius: 8px; font-size: 13px; color: var(--accent); }
 #day-status { color: var(--muted); font-size: 14px; flex: 1; }
 #day-status.locked { color: var(--warn); }
+.deadline.urgent { color: var(--warn); font-weight: 600; }
 
 .meal {
   display: grid;

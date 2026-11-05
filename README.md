@@ -26,6 +26,7 @@ Options (environment variables, or `.env`):
 - `NTFY_DEMO=1` is the same as `--demo`.
 - `NTFY_READONLY=1` shows your real plan but refuses to send changes to NTFY.
 - `NTFY_DB` sets the path to the local archive (default `./ntfy.db`).
+- `NTFY_IMAGE_CACHE` sets the photo cache directory (default `./cache/images`).
 
 ## Planner
 
@@ -40,6 +41,12 @@ Options (environment variables, or `.env`):
   current dish, `↑`/`↓` changes the meal, `←`/`→` changes the day.
 - **Keep the rest** confirms the current dish for every meal you haven't chosen yet.
 - When all meals of a day are chosen, it moves on to the next open day.
+- Each day shows how long it can still be changed (`locks in 2d 5h`). Under 24 hours the time also
+  appears in the day strip, in amber. A day locks on screen the moment its deadline passes.
+- Days whose menu was published since you last looked get a green dot. The page reloads the plan
+  every 15 minutes (and when you come back to the tab), and tells you about newly published menus.
+- Switching days is instant. The server downloads every dish photo into a local cache after each
+  hourly sync (about 100 MB for a month of menus), and the browser preloads them, nearest days first.
 
 Every change is checked against NTFY's reply and logged in the archive.
 

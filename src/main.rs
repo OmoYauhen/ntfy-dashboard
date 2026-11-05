@@ -1,4 +1,5 @@
 mod db;
+mod images;
 mod model;
 mod orion;
 
@@ -31,6 +32,7 @@ struct AppState {
     demo_days: Mutex<Option<Vec<Day>>>,
     /// Local archive of everything seen in the account (live mode only).
     db: Option<db::Db>,
+    images: images::ImageCache,
 }
 
 type Shared = Arc<AppState>;
@@ -63,7 +65,9 @@ async fn main() -> Result<()> {
         let path = std::env::var("NTFY_DB").unwrap_or_else(|_| "ntfy.db".to_string());
         Some(db::Db::open(&path).with_context(|| format!("cannot open archive {path}"))?)
     };
-    let state = Arc::new(AppState { client: Client::new(creds)?, demo, read_only, demo_days: Mutex::new(None), db });
+    let cache_dir = std::env::var("NTFY_IMAGE_CACHE").unwrap_or_else(|_| "cache/images".to_string());
+    let images = images::ImageCache::new(&cache_dir).with_context(|| format!("cannot create image cache {cache_dir}"))?;
+    let state = Arc::new(AppState { client: Client::new(creds)?, demo, read_only, demo_days: Mutex::new(None), db, images });
 
     if !demo {
         match state.client.check_login().await {
@@ -74,7 +78,11 @@ async fn main() -> Result<()> {
         tokio::spawn(async move {
             loop {
                 match sync_archive(&state).await {
-                    Ok(stats) => println!("archive synced: {stats:?}"),
+                    Ok((stats, image_ids)) => {
+                        println!("archive synced: {stats:?}");
+                        let fetched = state.images.prefetch(&state.client, image_ids).await;
+                        println!("image cache: {fetched} new images");
+                    }
                     Err(e) => eprintln!("archive sync failed: {e:#}"),
                 }
                 tokio::time::sleep(SYNC_EVERY).await;
@@ -118,7 +126,11 @@ async fn days(State(state): State<Shared>) -> Result<Json<serde_json::Value>, Ap
     let days = if state.demo {
         let mut cache = state.demo_days.lock().await;
         if cache.is_none() {
-            *cache = Some(load_demo_days(&state.client).await?);
+            let days = load_demo_days(&state.client).await?;
+            let ids = days.iter().flat_map(|d| &d.meals).flat_map(|m| &m.options).filter_map(|o| o.image.clone()).collect();
+            let background = state.clone();
+            tokio::spawn(async move { background.images.prefetch(&background.client, ids).await });
+            *cache = Some(days);
         }
         cache.clone().unwrap()
     } else {
@@ -187,13 +199,14 @@ fn yesterday() -> String {
 }
 
 /// Copies every delivery the API still returns (about three past days and all future ones),
-/// plus diets and orders, into the local archive.
-async fn sync_archive(state: &AppState) -> Result<db::SyncStats> {
+/// plus diets and orders, into the local archive. Also returns the photos of every dish seen.
+async fn sync_archive(state: &AppState) -> Result<(db::SyncStats, Vec<String>)> {
     let db = state.db.as_ref().context("no archive in demo mode")?;
-    let mut stats = db.store_deliveries(&state.client.deliveries(None, None).await?)?;
+    let deliveries = state.client.deliveries(None, None).await?;
+    let mut stats = db.store_deliveries(&deliveries)?;
     stats.diets = db.store_diets(&state.client.delivery_diets().await?)?;
     stats.orders = db.store_orders(&state.client.orders().await?)?;
-    Ok(stats)
+    Ok((stats, images::product_image_ids(&deliveries)))
 }
 
 fn archive(state: &AppState) -> Result<&db::Db, AppError> {
@@ -205,7 +218,9 @@ async fn history(State(state): State<Shared>) -> Result<Json<serde_json::Value>,
 }
 
 async fn sync_now(State(state): State<Shared>) -> Result<Json<serde_json::Value>, AppError> {
-    let stats = sync_archive(&state).await?;
+    let (stats, image_ids) = sync_archive(&state).await?;
+    let background = state.clone();
+    tokio::spawn(async move { background.images.prefetch(&background.client, image_ids).await });
     Ok(Json(json!({ "meals": stats.meals, "products": stats.products, "orders": stats.orders, "diets": stats.diets })))
 }
 
@@ -270,6 +285,7 @@ struct ImageQuery {
 }
 
 async fn image(State(state): State<Shared>, Path(id): Path<String>, Query(q): Query<ImageQuery>) -> Result<Response, AppError> {
-    let (content_type, bytes) = state.client.image(&id, q.r.as_deref().unwrap_or("MEDIUM")).await?;
-    Ok(([(header::CONTENT_TYPE, content_type), (header::CACHE_CONTROL, "public, max-age=604800".to_string())], bytes).into_response())
+    let resolution = q.r.as_deref().unwrap_or(images::TILE_RESOLUTION);
+    let (content_type, bytes) = state.images.get(&state.client, &id, resolution).await?;
+    Ok(([(header::CONTENT_TYPE, content_type), (header::CACHE_CONTROL, "public, max-age=31536000, immutable".to_string())], bytes).into_response())
 }
