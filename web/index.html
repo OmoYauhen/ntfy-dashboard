@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NTFY meal planner</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🥗</text></svg>">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>NTFY meals <span id="mode" class="badge" hidden>demo</span></h1>
+    <nav id="days" aria-label="Days"></nav>
+  </header>
+  <main>
+    <div id="day-head">
+      <button id="prev" aria-label="Previous day">‹</button>
+      <h2 id="day-title"></h2>
+      <span id="day-status"></span>
+      <button id="next" aria-label="Next day">›</button>
+    </div>
+    <div id="meals"></div>
+    <p id="message" hidden></p>
+  </main>
+  <div id="toast" role="status" hidden></div>
+  <script src="/app.js"></script>
+</body>
+</html>
