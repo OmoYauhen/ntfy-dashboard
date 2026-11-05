@@ -27,6 +27,11 @@ const SYNC_EVERY: std::time::Duration = std::time::Duration::from_secs(3600);
 const SESSION_COOKIE: &str = "ntfy_session";
 /// How long a browser stays logged in (unless the server restarts or someone logs out).
 const SESSION_DAYS: u64 = 30;
+/// Failed logins allowed per client (and in total) per window, so the dashboard can't be used to
+/// guess NTFY passwords, nor to get the owner's NTFY account locked.
+const LOGIN_WINDOW: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+const LOGIN_FAILURES_PER_CLIENT: usize = 5;
+const LOGIN_FAILURES_TOTAL: usize = 20;
 
 struct AppState {
     client: Client,
@@ -42,6 +47,10 @@ struct AppState {
     /// Browser sessions (cookie values) of the logged-in account. Memory only.
     sessions: std::sync::Mutex<HashSet<String>>,
     account: std::sync::Mutex<Option<orion::Account>>,
+    /// NTFY user ids allowed to log in; empty allows everyone.
+    allowed_users: HashSet<u64>,
+    /// Recent failed logins: (when, client).
+    failed_logins: std::sync::Mutex<Vec<(std::time::Instant, String)>>,
     images: images::ImageCache,
 }
 
@@ -90,6 +99,16 @@ async fn main() -> Result<()> {
     std::fs::create_dir_all(&data_dir).with_context(|| format!("cannot create {}", data_dir.display()))?;
     let cache_dir = std::env::var("NTFY_IMAGE_CACHE").unwrap_or_else(|_| "cache/images".to_string());
     let images = images::ImageCache::new(&cache_dir).with_context(|| format!("cannot create image cache {cache_dir}"))?;
+    let allowed_users = std::env::var("NTFY_ALLOWED_USERS")
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.parse().with_context(|| format!("NTFY_ALLOWED_USERS: {s} is not a user id")))
+        .collect::<Result<HashSet<u64>>>()?;
+    if !demo && allowed_users.is_empty() {
+        eprintln!("warning: NTFY_ALLOWED_USERS is not set, so any NTFY account can log in");
+    }
     let state = Arc::new(AppState {
         client: Client::new()?,
         demo,
@@ -99,6 +118,8 @@ async fn main() -> Result<()> {
         db: std::sync::Mutex::new(None),
         sessions: std::sync::Mutex::new(HashSet::new()),
         account: std::sync::Mutex::new(None),
+        allowed_users,
+        failed_logins: std::sync::Mutex::new(Vec::new()),
         images,
     });
 
@@ -172,18 +193,49 @@ struct LoginRequest {
     password: String,
 }
 
-async fn login(State(state): State<Shared>, Json(req): Json<LoginRequest>) -> Result<Response, AppError> {
+/// The client address as seen by the reverse proxy in front (its own entry is the last one), or
+/// "direct" when there is no proxy.
+fn client_id(headers: &HeaderMap) -> String {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.rsplit(',').next())
+        .map(|ip| ip.trim().to_string())
+        .unwrap_or_else(|| "direct".to_string())
+}
+
+/// Too many recent failed logins from this client, or overall.
+fn login_throttled(state: &AppState, client: &str) -> bool {
+    let mut failures = state.failed_logins.lock().unwrap();
+    failures.retain(|(at, _)| at.elapsed() < LOGIN_WINDOW);
+    failures.len() >= LOGIN_FAILURES_TOTAL || failures.iter().filter(|(_, c)| c == client).count() >= LOGIN_FAILURES_PER_CLIENT
+}
+
+async fn login(State(state): State<Shared>, headers: HeaderMap, Json(req): Json<LoginRequest>) -> Result<Response, AppError> {
     if state.demo {
         return Err(AppError::new(StatusCode::BAD_REQUEST, "the demo needs no login"));
     }
+    let client = client_id(&headers);
+    if login_throttled(&state, &client) {
+        return Err(AppError::new(StatusCode::TOO_MANY_REQUESTS, "Too many failed logins. Try again in 15 minutes."));
+    }
     let creds = Credentials { email: req.email.trim().to_string(), password: req.password.clone() };
-    let account = match state.client.login(creds).await {
+    let allowed = |account: &orion::Account| state.allowed_users.is_empty() || state.allowed_users.contains(&account.user_id);
+    let account = match state.client.login(creds, allowed).await {
         Ok(account) => account,
         Err(e) => {
+            state.failed_logins.lock().unwrap().push((std::time::Instant::now(), client.clone()));
+            eprintln!("failed login from {client}: {e:#}");
             // Slow down guessing; NTFY may lock the account after many failures.
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             let rejected = e.downcast_ref::<orion::ApiError>().is_some_and(|e| e.status == 401);
-            return Err(if rejected { AppError::new(StatusCode::UNAUTHORIZED, "Wrong email or password.") } else { e.into() });
+            return Err(if rejected {
+                AppError::new(StatusCode::UNAUTHORIZED, "Wrong email or password.")
+            } else if e.downcast_ref::<orion::NotAllowed>().is_some() {
+                AppError::new(StatusCode::FORBIDDEN, "This NTFY account is not allowed on this dashboard.")
+            } else {
+                e.into()
+            });
         }
     };
 
@@ -205,8 +257,18 @@ async fn login(State(state): State<Shared>, Json(req): Json<LoginRequest>) -> Re
     let background = state.clone();
     tokio::spawn(async move { sync_and_prefetch(&background).await });
 
-    let cookie = format!("{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}", SESSION_DAYS * 86400);
+    let cookie = format!(
+        "{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}{}",
+        SESSION_DAYS * 86400,
+        secure_suffix(&headers)
+    );
     Ok(([(header::SET_COOKIE, cookie)], Json(json!({ "name": account.first_name }))).into_response())
+}
+
+/// Behind an HTTPS proxy the cookie must only ever travel over HTTPS.
+fn secure_suffix(headers: &HeaderMap) -> &'static str {
+    let https = headers.get("x-forwarded-proto").and_then(|v| v.to_str().ok()) == Some("https");
+    if https { "; Secure" } else { "" }
 }
 
 /// Forgets the credentials, the NTFY session and every browser session.
@@ -217,7 +279,7 @@ async fn logout(State(state): State<Shared>, headers: HeaderMap) -> Result<Respo
     state.account.lock().unwrap().take();
     state.db.lock().unwrap().take();
     println!("logged out");
-    let cookie = format!("{SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
+    let cookie = format!("{SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0{}", secure_suffix(&headers));
     Ok(([(header::SET_COOKIE, cookie)], Json(json!({ "ok": true }))).into_response())
 }
 
@@ -433,5 +495,14 @@ mod tests {
         assert_eq!(session_cookie(&headers).as_deref(), Some("abc123"));
         headers.insert(header::COOKIE, "ntfy_session_x=2".parse().unwrap());
         assert_eq!(session_cookie(&headers), None);
+    }
+
+    #[test]
+    fn client_is_the_address_the_proxy_saw() {
+        let mut headers = HeaderMap::new();
+        assert_eq!(client_id(&headers), "direct");
+        // A client can prepend fake entries; the proxy appends the real one last.
+        headers.insert("x-forwarded-for", "1.2.3.4, 203.0.113.9".parse().unwrap());
+        assert_eq!(client_id(&headers), "203.0.113.9");
     }
 }

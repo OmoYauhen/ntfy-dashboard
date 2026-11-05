@@ -6,26 +6,63 @@ pick that dish. When all 5 meals of a day are picked, it moves on to the next op
 
 Rust (axum) backend that talks to the NTFY API. Plain HTML/CSS/JS frontend, embedded in the binary.
 
-## Run
+## Development
+
+With Nix, `nix develop` gives a shell with Rust, clippy, rustfmt, rust-analyzer, sqlite and
+cargo-watch (pinned to nixos-26.05, the same as the package build). Without Nix, any Rust ≥ 1.89
+with a C compiler works (SQLite is built in).
 
 ```sh
-cargo run --release
-# open http://127.0.0.1:8080 and log in with your NTFY account
+nix develop
+cargo run -- --demo        # no account needed: public menu, choices kept in memory
+cargo run                  # real account: open http://127.0.0.1:8080 and log in
+cargo test
+cargo watch -x 'run -- --demo'
 ```
 
-Demo mode needs no account. It builds days from the public menu (the dishes served by the
-selectable diets) and keeps selections in memory:
+Build or run the release package directly:
 
 ```sh
-cargo run --release -- --demo
+nix build                  # ./result/bin/ntfy-dashboard
+nix run . -- --demo
 ```
 
-Options (environment variables, or `.env`):
+Options (environment variables, or `.env`; see `.env.example`):
 - `NTFY_BIND` sets the listen address (default `127.0.0.1:8080`).
+- `NTFY_ALLOWED_USERS` is a comma-separated list of NTFY user ids that may log in. Set it whenever
+  other people can reach the dashboard; empty allows any NTFY account.
 - `NTFY_DEMO=1` is the same as `--demo`.
 - `NTFY_READONLY=1` shows your real plan but refuses to send changes to NTFY.
 - `NTFY_DATA_DIR` sets where the per-account archives `ntfy-<user id>.db` live (default `.`).
 - `NTFY_IMAGE_CACHE` sets the photo cache directory (default `./cache/images`).
+
+## NixOS
+
+The flake exports `nixosModules.default`. `nix/module.nix` also works on its own for configs that
+aren't flakes. It runs the server as the `ntfy-dashboard` system user, keeps archives and photos in
+`/var/lib/ntfy-dashboard`, and applies systemd sandboxing.
+
+```nix
+# flake.nix of your system
+inputs.ntfy-dashboard.url = "github:OmoYauhen/ntfy-dashboard";
+# in the host's modules
+imports = [ inputs.ntfy-dashboard.nixosModules.default ];
+
+# or, without flakes
+imports = [ "${builtins.fetchGit { url = "git@github.com:OmoYauhen/ntfy-dashboard.git"; rev = "…"; }}/nix/module.nix" ];
+
+services.ntfy-dashboard = {
+  enable = true;
+  port = 8440;                 # listens on 127.0.0.1; put a TLS reverse proxy in front
+  allowedUsers = [ 1234567 ];  # your NTFY user id (logged on every login)
+};
+```
+
+Behind the reverse proxy, the session cookie gets `Secure` when the proxy sends
+`X-Forwarded-Proto: https`, and failed logins are counted per `X-Forwarded-For` client.
+
+It runs at <https://ntfy.yauhen.io> on n1x1e, deployed from the
+[nixie](https://github.com/OmoYauhen/nixie) hive (`modules/ntfy-dashboard.nix`).
 
 ## Login
 
@@ -37,6 +74,10 @@ archive sync pauses.
 Each browser that logs in gets its own session cookie (HttpOnly, 30 days). Everything except dish
 photos requires it, so people who can reach the URL can't see or change your plan. Logging out
 ends every browser's session.
+
+Only accounts in `NTFY_ALLOWED_USERS` can log in; others are rejected even with a correct password.
+Failed logins are limited to 5 per client and 20 overall per 15 minutes, so the login page can't
+be used to guess NTFY passwords or get your NTFY account locked.
 
 ## Planner
 
@@ -76,8 +117,10 @@ choices you made here. It syncs at startup, every hour, whenever the planner loa
 - `src/orion.rs`: API client (login and refresh, deliveries, menu, item change, image proxy).
 - `src/model.rs`: turns API responses into days → meals → dishes.
 - `src/db.rs`: SQLite archive (history, dish stats, exports).
-- `src/main.rs`: HTTP server (`/api/days`, `/api/select`, `/img/{id}`).
+- `src/images.rs`: photo disk cache and prefetching.
+- `src/main.rs`: HTTP server, login and sessions, sync loop, exports.
 - `web/`: frontend.
+- `nix/package.nix`, `nix/module.nix`, `flake.nix`: package, NixOS module, dev shell.
 - `API.md`: reverse-engineered API notes.
 
 ## License

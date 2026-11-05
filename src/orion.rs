@@ -67,6 +67,18 @@ impl std::fmt::Display for NotLoggedIn {
 
 impl std::error::Error for NotLoggedIn {}
 
+/// The credentials work, but the account is not on the dashboard's allowlist.
+#[derive(Debug)]
+pub struct NotAllowed;
+
+impl std::fmt::Display for NotAllowed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("account not allowed")
+    }
+}
+
+impl std::error::Error for NotAllowed {}
+
 #[derive(Deserialize)]
 struct Envelope<T> {
     data: T,
@@ -114,10 +126,13 @@ impl Client {
         session_from(value)
     }
 
-    /// Checks the credentials with NTFY and, if they work, keeps them in memory.
-    pub async fn login(&self, creds: Credentials) -> Result<Account> {
+    /// Checks the credentials with NTFY and, if they work for an `allowed` account, keeps them in memory.
+    pub async fn login(&self, creds: Credentials, allowed: impl Fn(&Account) -> bool) -> Result<Account> {
         let session = self.sign_in(&creds).await?;
         let account = Account { user_id: session.user_id, first_name: session.first_name.clone() };
+        if !allowed(&account) {
+            bail!(NotAllowed);
+        }
         *self.creds.lock().unwrap() = Some(creds);
         *self.session.lock().await = Some(session);
         Ok(account)

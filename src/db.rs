@@ -362,8 +362,8 @@ mod tests {
     fn owner_comes_from_stored_diets() {
         let db = Db::memory().unwrap();
         assert_eq!(db.owner().unwrap(), None);
-        db.store_diets(&[json!({"id": 1, "user_id": 3430488, "user_diet_name": "X", "kcal": 1750})]).unwrap();
-        assert_eq!(db.owner().unwrap(), Some(3430488));
+        db.store_diets(&[json!({"id": 1, "user_id": 4242, "user_diet_name": "X", "kcal": 1750})]).unwrap();
+        assert_eq!(db.owner().unwrap(), Some(4242));
     }
 
     #[test]
