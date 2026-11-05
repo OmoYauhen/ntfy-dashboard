@@ -52,6 +52,8 @@ impl IntoResponse for AppError {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // A missing .env is fine: the variables may come from the real environment.
+    let _ = dotenvy::dotenv();
     let demo = std::env::args().any(|a| a == "--demo") || std::env::var("NFTY_DEMO").is_ok_and(|v| v == "1");
     let read_only = std::env::var("NFTY_READONLY").is_ok_and(|v| v == "1");
     let creds = if demo { None } else { Some(load_credentials()?) };
@@ -104,16 +106,12 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// NFTY_EMAIL/NFTY_PASSWORD, or an `email:password` file at NFTY_CREDS (default ./nfty_creds.txt).
+/// NFTY_EMAIL and NFTY_PASSWORD, from the environment or `.env`.
 fn load_credentials() -> Result<Credentials> {
-    if let (Ok(email), Ok(password)) = (std::env::var("NFTY_EMAIL"), std::env::var("NFTY_PASSWORD")) {
-        return Ok(Credentials { email, password });
-    }
-    let path = std::env::var("NFTY_CREDS").unwrap_or_else(|_| "nfty_creds.txt".to_string());
-    let text = std::fs::read_to_string(&path)
-        .with_context(|| format!("no NFTY_EMAIL/NFTY_PASSWORD and cannot read {path} (or run with --demo)"))?;
-    let (email, password) = text.trim().split_once(':').context("credentials file must contain email:password")?;
-    Ok(Credentials { email: email.to_string(), password: password.to_string() })
+    let var = |name: &str| {
+        std::env::var(name).with_context(|| format!("{name} is not set (see .env.example, or run with --demo)"))
+    };
+    Ok(Credentials { email: var("NFTY_EMAIL")?, password: var("NFTY_PASSWORD")? })
 }
 
 async fn days(State(state): State<Shared>) -> Result<Json<serde_json::Value>, AppError> {

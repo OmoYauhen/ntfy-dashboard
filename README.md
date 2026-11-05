@@ -9,7 +9,7 @@ Rust (axum) backend that talks to the NTFY API. Plain HTML/CSS/JS frontend, embe
 ## Run
 
 ```sh
-# credentials: NFTY_EMAIL + NFTY_PASSWORD, or an `email:password` file (default ./nfty_creds.txt)
+cp .env.example .env   # then put your NTFY email and password in it
 cargo run --release
 # open http://127.0.0.1:8080
 ```
@@ -21,9 +21,8 @@ selectable diets) and keeps selections in memory:
 cargo run --release -- --demo
 ```
 
-Options (environment variables):
+Options (environment variables, or `.env`):
 - `NFTY_BIND` sets the listen address (default `127.0.0.1:8080`).
-- `NFTY_CREDS` sets the path to the credentials file.
 - `NFTY_DEMO=1` is the same as `--demo`.
 - `NFTY_READONLY=1` shows your real plan but refuses to send changes to NTFY.
 - `NFTY_DB` sets the path to the local archive (default `./nfty.db`).
@@ -61,3 +60,7 @@ choices you made here. It syncs at startup, every hour, whenever the planner loa
 - `src/main.rs`: HTTP server (`/api/days`, `/api/select`, `/img/{id}`).
 - `web/`: frontend.
 - `API.md`: reverse-engineered API notes.
+
+## License
+
+MIT, see [LICENSE](LICENSE).

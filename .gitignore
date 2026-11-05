@@ -1,3 +1,4 @@
+.env
 nfty_creds.txt
 /target
 *.db
