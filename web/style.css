@@ -99,8 +99,8 @@ main { padding: 10px 20px 24px; }
   text-align: left; color: inherit; font: inherit;
   box-shadow: 0 1px 2px rgb(0 0 0 / .08);
 }
-.tile:hover:not(:disabled) { border-color: var(--line); }
-.tile:disabled { cursor: default; }
+.tile:hover:not([aria-disabled="true"]) { border-color: var(--line); }
+.tile[aria-disabled="true"] { cursor: default; }
 .tile img {
   /* Size images from the viewport height so all five meal rows fit on one screen. */
   width: 100%; height: var(--img-h);
@@ -185,11 +185,25 @@ kbd {
   transform-origin: 0 0; will-change: transform, clip-path;
   transition: transform 260ms cubic-bezier(.2, .8, .2, 1), clip-path 260ms cubic-bezier(.2, .8, .2, 1),
     opacity 200ms ease;
-  cursor: pointer;
 }
 #zoom.selected { border-color: var(--accent); }
 #zoom.selected.default { border-style: dashed; }
-#zoom.locked { cursor: default; }
+.tile .info {
+  position: absolute; right: 6px; top: calc(var(--img-h) - 28px);
+  width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  background: rgb(255 255 255 / .92); color: #1d1d1b; box-shadow: 0 1px 3px rgb(0 0 0 / .3);
+  font: italic 700 13px Georgia, serif; cursor: pointer;
+  transition: transform 120ms ease, background 120ms ease;
+}
+.tile .info:hover, .tile .info:focus-visible { transform: scale(1.15); background: #fff; outline: 2px solid var(--accent); }
+.zoom-close {
+  position: absolute; z-index: 1; top: 8px; right: 8px; width: 28px; height: 28px; border: 0; border-radius: 50%;
+  background: rgb(0 0 0 / .55); color: #fff; font-size: 18px; line-height: 1; cursor: pointer;
+}
+.zoom-close:hover { background: rgb(0 0 0 / .75); }
+.zoom-foot { padding: 4px 14px 14px; }
+.zoom-foot .zoom-action { padding: 0; }
+.zoom-choose { width: 100%; padding: 8px 12px; font-size: 14px; }
 .zoom-media { position: relative; overflow: hidden; }
 .zoom-media img {
   width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; background: var(--line);
@@ -207,7 +221,7 @@ kbd {
 .zoom-head .facts { margin: 0; font-size: 12.5px; color: var(--muted); }
 #zoom .hint, .hist-meal .hint { margin: 4px 0; font-size: 12px; color: var(--accent); }
 .hist-meal .hint { margin: 4px 14px; }
-.zoom-action { margin: 0; padding: 8px 14px 12px; font-size: 12.5px; font-weight: 600; color: var(--accent); }
+.zoom-action { margin: 0; font-size: 13px; font-weight: 600; color: var(--accent); }
 @media (prefers-reduced-motion: reduce) {
   #zoom { transition: opacity 150ms ease; }
   .zoom-media img { animation: none; }

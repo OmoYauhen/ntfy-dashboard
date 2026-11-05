@@ -51,39 +51,42 @@ function badges(dish) {
 
 function tile(day, meal, dish, index) {
   const selected = meal.selected === dish.id;
-  return el(
+  const node = el(
     "button",
     {
       class: `tile${selected ? " selected" : ""}${selected && !meal.user_selected ? " default" : ""}${dish.history ? " eaten-before" : ""}`,
       title: dish.history ? `You had this dish ${dish.history.eaten}×, last on ${dish.history.last_eaten}` : null,
-      disabled: !day.editable,
+      // Not `disabled`: locked tiles must still open their details.
+      "aria-disabled": String(!day.editable),
       "aria-pressed": String(selected),
       "aria-label": dish.name,
       onclick: (e) => choose(day, meal, dish, e.currentTarget),
-      // Mouse only: on touch screens a tap should just pick the dish.
-      onpointerenter: (e) => e.pointerType === "mouse" && scheduleZoom(day, meal, dish, e.currentTarget),
-      onpointerleave: (e) => { if (!$("zoom").contains(e.relatedTarget)) closeZoom(); },
     },
     el("img", { src: imageUrl(dish.image), alt: "", loading: "lazy" }),
     index < 9 ? el("kbd", {}, String(index + 1)) : null,
     badges(dish),
+    // A span, since a button can't contain another button.
+    el("span", {
+      class: "info", role: "button", tabindex: "0", title: "Details", "aria-label": `Details: ${dish.name}`,
+      onclick: (e) => { e.stopPropagation(); openZoom(day, meal, dish, node); },
+      onkeydown: (e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        e.stopPropagation();
+        openZoom(day, meal, dish, node);
+      },
+    }, "i"),
     el("span", { class: "name" }, dish.name),
     el("span", { class: "facts" }, facts(dish)),
   );
+  return node;
 }
 
-// Hovering a tile grows it into a bigger card on top: the card starts exactly over the tile
-// (scaled down, clipped to the tile's height) and animates to full size, revealing the details.
-const ZOOM_DELAY_MS = 120;
+// The details card grows out of its tile: it starts exactly over the tile (scaled down, clipped
+// to the tile's height) and animates to full size, revealing the details. Closing reverses it.
 const ZOOM_MS = 260;
 const ZOOM_WIDTH = 400;
-const zoom = { timer: null, anchor: null, hideTimer: null };
-
-function scheduleZoom(day, meal, dish, anchor) {
-  clearTimeout(zoom.timer);
-  // Moving from one open card straight onto another tile opens it without delay.
-  zoom.timer = setTimeout(() => openZoom(day, meal, dish, anchor), zoom.anchor ? 0 : ZOOM_DELAY_MS);
-}
+const zoom = { anchor: null, hideTimer: null };
 
 /// Transform + clip that make the (unscaled) card cover exactly `rect`.
 function tileTransform(rect, left, top, width, height) {
@@ -97,6 +100,7 @@ function tileTransform(rect, left, top, width, height) {
 
 function openZoom(day, meal, dish, anchor) {
   if (!anchor.isConnected) return;
+  if (zoom.anchor === anchor) return closeZoom();
   const card = $("zoom");
   clearTimeout(zoom.hideTimer);
   const selected = meal.selected === dish.id;
@@ -107,22 +111,27 @@ function openZoom(day, meal, dish, anchor) {
   sharp.src = imageUrl(dish.image, "MEDIUM-RETINA");
 
   let action = null;
-  if (day.editable) {
-    action = !selected ? "Click to choose" : meal.user_selected ? "✓ Your choice" : "Default dish · click to keep it";
+  if (day.editable && selected && meal.user_selected) {
+    action = el("p", { class: "zoom-action" }, "✓ Your choice");
+  } else if (day.editable) {
+    action = el("button", {
+      class: "action zoom-choose",
+      onclick: () => { closeZoom(true); choose(day, meal, dish, null); },
+    }, selected ? "Keep this dish" : "Choose this dish");
   }
   card.replaceChildren(...[
+    el("button", { class: "zoom-close", "aria-label": "Close", onclick: () => closeZoom() }, "×"),
     el("div", { class: "zoom-media" }, img, badges(dish)),
     el("div", { class: "zoom-head" },
       el("h3", {}, dish.name),
       el("p", { class: "facts" }, facts(dish)),
+      selected && !meal.user_selected && day.editable ? el("p", { class: "hint" }, "Default dish, not chosen yet.") : null,
       dish.history ? el("p", { class: "hint" }, `You had it ${dish.history.eaten}×, last on ${dish.history.last_eaten}.`) : null),
     dishDetails(dish),
-    action ? el("p", { class: "zoom-action" }, action) : null,
+    action ? el("div", { class: "zoom-foot" }, action) : null,
   ].filter(Boolean));
-  card.className = [selected && "selected", selected && !meal.user_selected && "default", !day.editable && "locked", dish.history && "eaten-before"]
+  card.className = [selected && "selected", selected && !meal.user_selected && "default", dish.history && "eaten-before"]
     .filter(Boolean).join(" ");
-  card.onclick = day.editable ? () => { closeZoom(true); choose(day, meal, dish, null); } : null;
-  card.onpointerleave = (e) => { if (e.relatedTarget !== anchor) closeZoom(); };
 
   // Final geometry: wider than the tile, image centred over the tile's image, kept on screen.
   const r = anchor.getBoundingClientRect();
@@ -135,24 +144,22 @@ function openZoom(day, meal, dish, anchor) {
   const height = card.offsetHeight;
   const imageGrowth = (width - r.width) * 0.75;
   const left = Math.min(Math.max(8, r.left + r.width / 2 - width / 2), innerWidth - width - 8);
-  const top = Math.min(Math.max(8, r.top - imageGrowth / 2), innerHeight - height - 8);
+  const top = Math.max(8, Math.min(Math.max(8, r.top - imageGrowth / 2), innerHeight - height - 8));
   card.style.left = `${left}px`;
-  card.style.top = `${Math.max(8, top)}px`;
+  card.style.top = `${top}px`;
 
-  const reopen = zoom.anchor === anchor;
   zoom.anchor = anchor;
-  zoom.geometry = { left, top: Math.max(8, top), width, height };
-  if (reopen) return;
-  Object.assign(card.style, tileTransform(r, left, Math.max(8, top), width, height));
+  zoom.geometry = { left, top, width, height };
+  Object.assign(card.style, tileTransform(r, left, top, width, height));
   card.style.opacity = "0.4";
   card.getBoundingClientRect(); // commit the start state before animating
   card.style.transition = "";
   Object.assign(card.style, { transform: "none", clipPath: "inset(0 0 0 0 round 14px)", opacity: "1" });
+  card.querySelector(".zoom-choose, .zoom-close").focus({ preventScroll: true });
 }
 
-/// Shrinks the card back onto its tile (or just fades it when `fade`, e.g. after a click).
+/// Shrinks the card back onto its tile (or just fades it when `fade`, e.g. after choosing).
 function closeZoom(fade = false) {
-  clearTimeout(zoom.timer);
   const card = $("zoom");
   const anchor = zoom.anchor;
   zoom.anchor = null;
@@ -298,13 +305,24 @@ async function load() {
 $("prev").addEventListener("click", () => show(state.current - 1));
 $("next").addEventListener("click", () => show(state.current + 1));
 $("keep-rest").addEventListener("click", keepRest);
-addEventListener("blur", () => closeZoom(true));
+// A click outside the open card only closes it; it must not also pick the tile underneath.
+document.addEventListener("click", (e) => {
+  if (!zoom.anchor || $("zoom").contains(e.target)) return;
+  const info = e.target.closest?.(".info");
+  if (info && !zoom.anchor.contains(info)) return; // another tile's details: let it open
+  e.stopPropagation();
+  e.preventDefault();
+  closeZoom();
+}, true);
 addEventListener("resize", () => closeZoom(true));
 
 // Keyboard flow: 1-9 picks a dish in the active meal, Enter keeps its current dish,
 // ↑/↓ moves between meals, ←/→ between days.
 document.addEventListener("keydown", (e) => {
-  closeZoom(true);
+  if (zoom.anchor) {
+    if (e.key === "Escape") { closeZoom(); e.preventDefault(); }
+    return;
+  }
   if (e.ctrlKey || e.metaKey || e.altKey || !state.days.length) return;
   const day = currentDay();
   const meal = day.meals[state.row];

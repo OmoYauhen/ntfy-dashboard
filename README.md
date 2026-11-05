@@ -34,8 +34,8 @@ Options (environment variables, or `.env`):
 - A solid green tile is your choice. A dashed tile is the caterer's default, which you haven't confirmed.
 - Tiles show NTFY's community rating (★). Dishes you had before (from your archive, any calorie size) get an
   amber frame and a `had 2×` badge.
-- Hover over a tile and it zooms into a bigger card (animated, with a slow photo pan) showing everything:
-  composition, allergens, all nutrients, weight, tags. Click the card to pick the dish.
+- The ⓘ button on a tile opens it as a bigger card (animated, with a slow photo pan) showing everything:
+  composition, allergens, all nutrients, weight, tags. Close it with ×, Esc or a click outside.
 - Keyboard: `1`–`9` picks a dish in the highlighted meal and moves to the next one, `Enter` keeps the
   current dish, `↑`/`↓` changes the meal, `←`/`→` changes the day.
 - **Keep the rest** confirms the current dish for every meal you haven't chosen yet.
