@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NTFY meals · log in</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🥗</text></svg>">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="login-page">
+  <form id="login" class="login-card">
+    <h1>NTFY meals</h1>
+    <p class="muted">Log in with your Nice To Fit You account.</p>
+    <label>Email <input id="email" type="email" autocomplete="username" required autofocus></label>
+    <label>Password <input id="password" type="password" autocomplete="current-password" required></label>
+    <p id="error" class="error" role="alert" hidden></p>
+    <button id="submit" class="action" type="submit">Log in</button>
+    <p class="note">Your password stays in this dashboard's memory only, until you log out or the server restarts.
+      It is never written to disk.</p>
+  </form>
+  <script src="/common.js"></script>
+  <script src="/login.js"></script>
+</body>
+</html>

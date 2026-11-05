@@ -26,7 +26,8 @@ const MENU_EXPANSIONS: &[&str] = &[
     "diets",
 ];
 
-#[derive(Clone)]
+/// Login data, kept only in memory and wiped when dropped.
+#[derive(Clone, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct Credentials {
     pub email: String,
     pub password: String,
@@ -37,13 +38,34 @@ struct Session {
     token: String,
     refresh_token: String,
     user_id: u64,
+    first_name: String,
+}
+
+/// The NTFY account the client is logged in as.
+#[derive(Clone, Debug)]
+pub struct Account {
+    pub user_id: u64,
+    pub first_name: String,
 }
 
 pub struct Client {
     http: reqwest::Client,
-    creds: Option<Credentials>,
+    /// Set by `login`, cleared by `logout`; used to log in again when the NTFY session expires.
+    creds: std::sync::Mutex<Option<Credentials>>,
     session: Mutex<Option<Session>>,
 }
+
+/// No one is logged in (or they logged out).
+#[derive(Debug)]
+pub struct NotLoggedIn;
+
+impl std::fmt::Display for NotLoggedIn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("not logged in")
+    }
+}
+
+impl std::error::Error for NotLoggedIn {}
 
 #[derive(Deserialize)]
 struct Envelope<T> {
@@ -57,12 +79,12 @@ struct SessionData {
 }
 
 impl Client {
-    pub fn new(creds: Option<Credentials>) -> Result<Self> {
+    pub fn new() -> Result<Self> {
         let http = reqwest::Client::builder()
             .user_agent("ntfy-dashboard")
             .timeout(std::time::Duration::from_secs(45))
             .build()?;
-        Ok(Self { http, creds, session: Mutex::new(None) })
+        Ok(Self { http, creds: std::sync::Mutex::new(None), session: Mutex::new(None) })
     }
 
     fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
@@ -84,13 +106,37 @@ impl Client {
         Ok(body)
     }
 
-    async fn login(&self) -> Result<Session> {
-        let creds = self.creds.as_ref().ok_or_else(|| anyhow!("no credentials configured"))?;
+    async fn sign_in(&self, creds: &Credentials) -> Result<Session> {
         let body = json!({ "email": creds.email, "password": creds.password });
         let value = Self::send_json(self.request(reqwest::Method::POST, "sessions").json(&body))
             .await
             .context("login failed")?;
         session_from(value)
+    }
+
+    /// Checks the credentials with NTFY and, if they work, keeps them in memory.
+    pub async fn login(&self, creds: Credentials) -> Result<Account> {
+        let session = self.sign_in(&creds).await?;
+        let account = Account { user_id: session.user_id, first_name: session.first_name.clone() };
+        *self.creds.lock().unwrap() = Some(creds);
+        *self.session.lock().await = Some(session);
+        Ok(account)
+    }
+
+    /// Forgets the credentials and the NTFY session.
+    pub async fn logout(&self) {
+        self.creds.lock().unwrap().take();
+        self.session.lock().await.take();
+    }
+
+    pub fn is_logged_in(&self) -> bool {
+        self.creds.lock().unwrap().is_some()
+    }
+
+    /// Logs in again with the stored credentials (the NTFY session expired).
+    async fn relogin(&self) -> Result<Session> {
+        let creds = self.creds.lock().unwrap().clone().ok_or(NotLoggedIn)?;
+        self.sign_in(&creds).await
     }
 
     async fn refresh(&self, refresh_token: &str) -> Result<Session> {
@@ -101,7 +147,7 @@ impl Client {
     async fn session(&self) -> Result<Session> {
         let mut guard = self.session.lock().await;
         if guard.is_none() {
-            *guard = Some(self.login().await?);
+            *guard = Some(self.relogin().await?);
         }
         Ok(guard.clone().unwrap())
     }
@@ -119,7 +165,7 @@ impl Client {
             Err(e) if is_unauthorized(&e) => {
                 let renewed = match self.refresh(&session.refresh_token).await {
                     Ok(s) => s,
-                    Err(_) => self.login().await?,
+                    Err(_) => self.relogin().await?,
                 };
                 *self.session.lock().await = Some(renewed.clone());
                 let req = self.request(method, &path(renewed.user_id)).bearer_auth(&renewed.token);
@@ -127,10 +173,6 @@ impl Client {
             }
             other => other,
         }
-    }
-
-    pub async fn check_login(&self) -> Result<()> {
-        self.session().await.map(|_| ())
     }
 
     /// Deliveries from `date_from` on (`status` filter optional), with their items and alternative
@@ -244,21 +286,22 @@ fn is_unauthorized(e: &anyhow::Error) -> bool {
 
 fn session_from(value: Value) -> Result<Session> {
     let data: SessionData = serde_json::from_value::<Envelope<SessionData>>(value)?.data;
-    let user_id = jwt_user_id(&data.token)?;
-    Ok(Session { token: data.token, refresh_token: data.refresh_token, user_id })
-}
-
-/// The user id is only available from the `id` claim of the access token.
-fn jwt_user_id(token: &str) -> Result<u64> {
-    let payload = token.split('.').nth(1).ok_or_else(|| anyhow!("malformed token"))?;
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload.trim_end_matches('='))?;
-    let claims: Value = serde_json::from_slice(&bytes)?;
-    match &claims["id"] {
+    let claims = jwt_claims(&data.token)?;
+    let user_id = match &claims["id"] {
         Value::Number(n) => n.as_u64(),
         Value::String(s) => s.parse().ok(),
         _ => None,
     }
-    .ok_or_else(|| anyhow!("token has no user id"))
+    .ok_or_else(|| anyhow!("token has no user id"))?;
+    let first_name = claims["first_name"].as_str().unwrap_or_default().to_string();
+    Ok(Session { token: data.token, refresh_token: data.refresh_token, user_id, first_name })
+}
+
+/// The user id and name are only available from the claims of the access token.
+fn jwt_claims(token: &str) -> Result<Value> {
+    let payload = token.split('.').nth(1).ok_or_else(|| anyhow!("malformed token"))?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload.trim_end_matches('='))?;
+    Ok(serde_json::from_slice(&bytes)?)
 }
 
 #[cfg(test)]
@@ -266,8 +309,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reads_user_id_from_jwt() {
+    fn reads_account_from_jwt() {
         let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"id":4242,"first_name":"A"}"#);
-        assert_eq!(jwt_user_id(&format!("h.{payload}.s")).unwrap(), 4242);
+        let token = format!("h.{payload}.s");
+        let session = session_from(json!({"data": {"token": token, "refresh_token": "r"}})).unwrap();
+        assert_eq!((session.user_id, session.first_name.as_str()), (4242, "A"));
     }
 }

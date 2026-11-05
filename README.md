@@ -9,9 +9,8 @@ Rust (axum) backend that talks to the NTFY API. Plain HTML/CSS/JS frontend, embe
 ## Run
 
 ```sh
-cp .env.example .env   # then put your NTFY email and password in it
 cargo run --release
-# open http://127.0.0.1:8080
+# open http://127.0.0.1:8080 and log in with your NTFY account
 ```
 
 Demo mode needs no account. It builds days from the public menu (the dishes served by the
@@ -25,8 +24,19 @@ Options (environment variables, or `.env`):
 - `NTFY_BIND` sets the listen address (default `127.0.0.1:8080`).
 - `NTFY_DEMO=1` is the same as `--demo`.
 - `NTFY_READONLY=1` shows your real plan but refuses to send changes to NTFY.
-- `NTFY_DB` sets the path to the local archive (default `./ntfy.db`).
+- `NTFY_DATA_DIR` sets where the per-account archives `ntfy-<user id>.db` live (default `.`).
 - `NTFY_IMAGE_CACHE` sets the photo cache directory (default `./cache/images`).
+
+## Login
+
+There are no stored credentials. The login page checks your email and password with NTFY and the
+server keeps them in memory only (wiped on logout), so it can log in again when NTFY's session
+expires. They're gone after **Log out** or a server restart; until you log in again the hourly
+archive sync pauses.
+
+Each browser that logs in gets its own session cookie (HttpOnly, 30 days). Everything except dish
+photos requires it, so people who can reach the URL can't see or change your plan. Logging out
+ends every browser's session.
 
 ## Planner
 
@@ -53,7 +63,7 @@ Every change is checked against NTFY's reply and logged in the archive.
 ## History
 
 NTFY's API only returns deliveries from about three days back, so the dashboard archives everything
-it sees into SQLite (`ntfy.db`): every meal with the full raw API JSON, all dishes with
+it sees into SQLite (`ntfy-<user id>.db`, one file per account): every meal with the full raw API JSON, all dishes with
 composition and nutrients, your ratings and comments, prices, diets, orders, and a log of the
 choices you made here. It syncs at startup, every hour, whenever the planner loads, and on
 **Sync now**. Keep it running, or at least start it every couple of days, so no day is missed.

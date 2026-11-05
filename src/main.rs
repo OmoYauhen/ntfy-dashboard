@@ -3,13 +3,15 @@ mod images;
 mod model;
 mod orion;
 
+use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    http::{StatusCode, header},
+    http::{HeaderMap, StatusCode, header},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
@@ -22,6 +24,9 @@ use orion::{Client, Credentials};
 
 const DEMO_DAYS: u64 = 7;
 const SYNC_EVERY: std::time::Duration = std::time::Duration::from_secs(3600);
+const SESSION_COOKIE: &str = "ntfy_session";
+/// How long a browser stays logged in (unless the server restarts or someone logs out).
+const SESSION_DAYS: u64 = 30;
 
 struct AppState {
     client: Client,
@@ -30,25 +35,48 @@ struct AppState {
     read_only: bool,
     /// Demo mode keeps the menu and the selections in memory.
     demo_days: Mutex<Option<Vec<Day>>>,
-    /// Local archive of everything seen in the account (live mode only).
-    db: Option<db::Db>,
+    /// Directory for the per-account archives (`ntfy-<user id>.db`).
+    data_dir: PathBuf,
+    /// Archive of the logged-in account.
+    db: std::sync::Mutex<Option<Arc<db::Db>>>,
+    /// Browser sessions (cookie values) of the logged-in account. Memory only.
+    sessions: std::sync::Mutex<HashSet<String>>,
+    account: std::sync::Mutex<Option<orion::Account>>,
     images: images::ImageCache,
 }
 
 type Shared = Arc<AppState>;
 
-struct AppError(anyhow::Error);
+struct AppError {
+    status: StatusCode,
+    error: anyhow::Error,
+}
 
 impl<E: Into<anyhow::Error>> From<E> for AppError {
     fn from(e: E) -> Self {
-        Self(e.into())
+        let error = e.into();
+        let status = if error.downcast_ref::<orion::NotLoggedIn>().is_some() {
+            StatusCode::UNAUTHORIZED
+        } else {
+            StatusCode::BAD_GATEWAY
+        };
+        Self { status, error }
+    }
+}
+
+impl AppError {
+    fn new(status: StatusCode, message: &str) -> Self {
+        Self { status, error: anyhow::anyhow!(message.to_string()) }
     }
 }
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        eprintln!("error: {:#}", self.0);
-        (StatusCode::BAD_GATEWAY, Json(json!({ "error": format!("{:#}", self.0) }))).into_response()
+        if self.status != StatusCode::UNAUTHORIZED {
+            eprintln!("error: {:#}", self.error);
+        }
+        let body = json!({ "error": format!("{:#}", self.error), "login_required": self.status == StatusCode::UNAUTHORIZED });
+        (self.status, Json(body)).into_response()
     }
 }
 
@@ -58,32 +86,29 @@ async fn main() -> Result<()> {
     let _ = dotenvy::dotenv();
     let demo = std::env::args().any(|a| a == "--demo") || std::env::var("NTFY_DEMO").is_ok_and(|v| v == "1");
     let read_only = std::env::var("NTFY_READONLY").is_ok_and(|v| v == "1");
-    let creds = if demo { None } else { Some(load_credentials()?) };
-    let db = if demo {
-        None
-    } else {
-        let path = std::env::var("NTFY_DB").unwrap_or_else(|_| "ntfy.db".to_string());
-        Some(db::Db::open(&path).with_context(|| format!("cannot open archive {path}"))?)
-    };
+    let data_dir = PathBuf::from(std::env::var("NTFY_DATA_DIR").unwrap_or_else(|_| ".".to_string()));
+    std::fs::create_dir_all(&data_dir).with_context(|| format!("cannot create {}", data_dir.display()))?;
     let cache_dir = std::env::var("NTFY_IMAGE_CACHE").unwrap_or_else(|_| "cache/images".to_string());
     let images = images::ImageCache::new(&cache_dir).with_context(|| format!("cannot create image cache {cache_dir}"))?;
-    let state = Arc::new(AppState { client: Client::new(creds)?, demo, read_only, demo_days: Mutex::new(None), db, images });
+    let state = Arc::new(AppState {
+        client: Client::new()?,
+        demo,
+        read_only,
+        demo_days: Mutex::new(None),
+        data_dir,
+        db: std::sync::Mutex::new(None),
+        sessions: std::sync::Mutex::new(HashSet::new()),
+        account: std::sync::Mutex::new(None),
+        images,
+    });
 
     if !demo {
-        match state.client.check_login().await {
-            Ok(()) => println!("logged in to NTFY"),
-            Err(e) => eprintln!("warning: {e:#} (the dashboard will retry on each request)"),
-        }
+        // Archive everything hourly while someone is logged in.
         let state = state.clone();
         tokio::spawn(async move {
             loop {
-                match sync_archive(&state).await {
-                    Ok((stats, image_ids)) => {
-                        println!("archive synced: {stats:?}");
-                        let fetched = state.images.prefetch(&state.client, image_ids).await;
-                        println!("image cache: {fetched} new images");
-                    }
-                    Err(e) => eprintln!("archive sync failed: {e:#}"),
+                if state.client.is_logged_in() {
+                    sync_and_prefetch(&state).await;
                 }
                 tokio::time::sleep(SYNC_EVERY).await;
             }
@@ -92,11 +117,16 @@ async fn main() -> Result<()> {
 
     let app = Router::new()
         .route("/", get(|| async { Html(include_str!("../web/index.html")) }))
+        .route("/login", get(|| async { Html(include_str!("../web/login.html")) }))
+        .route("/history", get(|| async { Html(include_str!("../web/history.html")) }))
         .route("/common.js", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../web/common.js")) }))
         .route("/app.js", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../web/app.js")) }))
-        .route("/style.css", get(|| async { ([(header::CONTENT_TYPE, "text/css")], include_str!("../web/style.css")) }))
-        .route("/history", get(|| async { Html(include_str!("../web/history.html")) }))
+        .route("/login.js", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../web/login.js")) }))
         .route("/history.js", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../web/history.js")) }))
+        .route("/style.css", get(|| async { ([(header::CONTENT_TYPE, "text/css")], include_str!("../web/style.css")) }))
+        .route("/api/session", get(session))
+        .route("/api/login", post(login))
+        .route("/api/logout", post(logout))
         .route("/api/days", get(days))
         .route("/api/history", get(history))
         .route("/api/sync", post(sync_now))
@@ -114,15 +144,114 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// NTFY_EMAIL and NTFY_PASSWORD, from the environment or `.env`.
-fn load_credentials() -> Result<Credentials> {
-    let var = |name: &str| {
-        std::env::var(name).with_context(|| format!("{name} is not set (see .env.example, or run with --demo)"))
-    };
-    Ok(Credentials { email: var("NTFY_EMAIL")?, password: var("NTFY_PASSWORD")? })
+fn session_cookie(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(';'))
+        .find_map(|c| c.trim().strip_prefix(SESSION_COOKIE)?.strip_prefix('=').map(str::to_string))
 }
 
-async fn days(State(state): State<Shared>) -> Result<Json<serde_json::Value>, AppError> {
+/// Every account-related endpoint requires a browser session created by `/api/login`.
+fn authorize(state: &AppState, headers: &HeaderMap) -> Result<(), AppError> {
+    let valid = state.demo
+        || session_cookie(headers).is_some_and(|token| state.sessions.lock().unwrap().contains(&token));
+    if valid { Ok(()) } else { Err(AppError::new(StatusCode::UNAUTHORIZED, "please log in")) }
+}
+
+async fn session(State(state): State<Shared>, headers: HeaderMap) -> Json<serde_json::Value> {
+    let logged_in = authorize(&state, &headers).is_ok();
+    let name = state.account.lock().unwrap().as_ref().map(|a| a.first_name.clone());
+    Json(json!({ "demo": state.demo, "logged_in": logged_in, "name": if logged_in { name } else { None } }))
+}
+
+#[derive(Deserialize)]
+struct LoginRequest {
+    email: String,
+    password: String,
+}
+
+async fn login(State(state): State<Shared>, Json(req): Json<LoginRequest>) -> Result<Response, AppError> {
+    if state.demo {
+        return Err(AppError::new(StatusCode::BAD_REQUEST, "the demo needs no login"));
+    }
+    let creds = Credentials { email: req.email.trim().to_string(), password: req.password.clone() };
+    let account = match state.client.login(creds).await {
+        Ok(account) => account,
+        Err(e) => {
+            // Slow down guessing; NTFY may lock the account after many failures.
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            let rejected = e.downcast_ref::<orion::ApiError>().is_some_and(|e| e.status == 401);
+            return Err(if rejected { AppError::new(StatusCode::UNAUTHORIZED, "Wrong email or password.") } else { e.into() });
+        }
+    };
+
+    let switched = state.account.lock().unwrap().as_ref().is_some_and(|a| a.user_id != account.user_id);
+    if switched || state.db.lock().unwrap().is_none() {
+        *state.db.lock().unwrap() = Some(Arc::new(open_archive(&state.data_dir, account.user_id)?));
+    }
+    let token = uuid::Uuid::new_v4().simple().to_string();
+    {
+        let mut sessions = state.sessions.lock().unwrap();
+        if switched {
+            sessions.clear(); // other browsers were logged in to the previous account
+        }
+        sessions.insert(token.clone());
+    }
+    println!("logged in to NTFY as user {}", account.user_id);
+    *state.account.lock().unwrap() = Some(account.clone());
+
+    let background = state.clone();
+    tokio::spawn(async move { sync_and_prefetch(&background).await });
+
+    let cookie = format!("{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}", SESSION_DAYS * 86400);
+    Ok(([(header::SET_COOKIE, cookie)], Json(json!({ "name": account.first_name }))).into_response())
+}
+
+/// Forgets the credentials, the NTFY session and every browser session.
+async fn logout(State(state): State<Shared>, headers: HeaderMap) -> Result<Response, AppError> {
+    authorize(&state, &headers)?;
+    state.client.logout().await;
+    state.sessions.lock().unwrap().clear();
+    state.account.lock().unwrap().take();
+    state.db.lock().unwrap().take();
+    println!("logged out");
+    let cookie = format!("{SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
+    Ok(([(header::SET_COOKIE, cookie)], Json(json!({ "ok": true }))).into_response())
+}
+
+/// Opens `ntfy-<user id>.db`, adopting a pre-login `ntfy.db` if it belongs to this account.
+fn open_archive(dir: &std::path::Path, user_id: u64) -> Result<db::Db> {
+    let path = dir.join(format!("ntfy-{user_id}.db"));
+    let legacy = dir.join("ntfy.db");
+    if !path.exists() && legacy.exists() && db::Db::open(&legacy.to_string_lossy())?.owner()? == Some(user_id) {
+        std::fs::rename(&legacy, &path)?;
+        println!("moved {} to {}", legacy.display(), path.display());
+    }
+    db::Db::open(&path.to_string_lossy()).with_context(|| format!("cannot open archive {}", path.display()))
+}
+
+fn archive(state: &AppState) -> Result<Arc<db::Db>, AppError> {
+    if state.demo {
+        return Err(AppError::new(StatusCode::NOT_FOUND, "history is not available in demo mode"));
+    }
+    state.db.lock().unwrap().clone().ok_or_else(|| AppError::new(StatusCode::UNAUTHORIZED, "please log in"))
+}
+
+async fn sync_and_prefetch(state: &AppState) {
+    match sync_archive(state).await {
+        Ok((stats, image_ids)) => {
+            println!("archive synced: {stats:?}");
+            let fetched = state.images.prefetch(&state.client, image_ids).await;
+            println!("image cache: {fetched} new images");
+        }
+        Err(e) => eprintln!("archive sync failed: {e:#}"),
+    }
+}
+
+async fn days(State(state): State<Shared>, headers: HeaderMap) -> Result<Json<serde_json::Value>, AppError> {
+    authorize(&state, &headers)?;
     let days = if state.demo {
         let mut cache = state.demo_days.lock().await;
         if cache.is_none() {
@@ -137,10 +266,9 @@ async fn days(State(state): State<Shared>) -> Result<Json<serde_json::Value>, Ap
         let today = today();
         let data = state.client.deliveries(Some(&today), Some("TO-BE-REALIZED")).await?;
         let mut days = model::days_from_deliveries(&data, chrono::Utc::now().fixed_offset());
-        if let Some(db) = &state.db {
-            db.store_deliveries(&data)?;
-            model::attach_history(&mut days, &db.dish_history(&yesterday())?);
-        }
+        let db = archive(&state)?;
+        db.store_deliveries(&data)?;
+        model::attach_history(&mut days, &db.dish_history(&yesterday())?);
         days
     };
     Ok(Json(json!({ "demo": state.demo, "read_only": state.read_only && !state.demo, "days": days })))
@@ -167,7 +295,12 @@ struct SelectRequest {
     from_product_id: Option<u64>,
 }
 
-async fn select(State(state): State<Shared>, Json(req): Json<SelectRequest>) -> Result<Json<serde_json::Value>, AppError> {
+async fn select(
+    State(state): State<Shared>,
+    headers: HeaderMap,
+    Json(req): Json<SelectRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    authorize(&state, &headers)?;
     if state.demo {
         let mut cache = state.demo_days.lock().await;
         let meal = cache
@@ -184,9 +317,7 @@ async fn select(State(state): State<Shared>, Json(req): Json<SelectRequest>) -> 
         return Err(anyhow::anyhow!("read-only mode: changes are not sent to NTFY").into());
     }
     state.client.change_item(req.delivery_id, req.item_id, req.product_id).await?;
-    if let Some(db) = &state.db {
-        db.record_selection(req.item_id, req.from_product_id, req.product_id)?;
-    }
+    archive(&state)?.record_selection(req.item_id, req.from_product_id, req.product_id)?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -201,7 +332,7 @@ fn yesterday() -> String {
 /// Copies every delivery the API still returns (about three past days and all future ones),
 /// plus diets and orders, into the local archive. Also returns the photos of every dish seen.
 async fn sync_archive(state: &AppState) -> Result<(db::SyncStats, Vec<String>)> {
-    let db = state.db.as_ref().context("no archive in demo mode")?;
+    let db = state.db.lock().unwrap().clone().ok_or(orion::NotLoggedIn)?;
     let deliveries = state.client.deliveries(None, None).await?;
     let mut stats = db.store_deliveries(&deliveries)?;
     stats.diets = db.store_diets(&state.client.delivery_diets().await?)?;
@@ -209,28 +340,28 @@ async fn sync_archive(state: &AppState) -> Result<(db::SyncStats, Vec<String>)> 
     Ok((stats, images::product_image_ids(&deliveries)))
 }
 
-fn archive(state: &AppState) -> Result<&db::Db, AppError> {
-    state.db.as_ref().ok_or_else(|| anyhow::anyhow!("history is not available in demo mode").into())
-}
-
-async fn history(State(state): State<Shared>) -> Result<Json<serde_json::Value>, AppError> {
+async fn history(State(state): State<Shared>, headers: HeaderMap) -> Result<Json<serde_json::Value>, AppError> {
+    authorize(&state, &headers)?;
     Ok(Json(archive(&state)?.history(&today())?))
 }
 
-async fn sync_now(State(state): State<Shared>) -> Result<Json<serde_json::Value>, AppError> {
+async fn sync_now(State(state): State<Shared>, headers: HeaderMap) -> Result<Json<serde_json::Value>, AppError> {
+    authorize(&state, &headers)?;
     let (stats, image_ids) = sync_archive(&state).await?;
     let background = state.clone();
     tokio::spawn(async move { background.images.prefetch(&background.client, image_ids).await });
     Ok(Json(json!({ "meals": stats.meals, "products": stats.products, "orders": stats.orders, "diets": stats.diets })))
 }
 
-async fn export_json(State(state): State<Shared>) -> Result<Response, AppError> {
+async fn export_json(State(state): State<Shared>, headers: HeaderMap) -> Result<Response, AppError> {
+    authorize(&state, &headers)?;
     let body = serde_json::to_string_pretty(&archive(&state)?.export()?)?;
     Ok(download("application/json", "ntfy-archive.json", body))
 }
 
 /// One row per eaten meal with every nutrient, for spreadsheets.
-async fn export_csv(State(state): State<Shared>) -> Result<Response, AppError> {
+async fn export_csv(State(state): State<Shared>, headers: HeaderMap) -> Result<Response, AppError> {
+    authorize(&state, &headers)?;
     const COLUMNS: &[&str] = &[
         "date", "meal", "dish", "kcal", "protein_g", "carb_g", "fat_g", "saturated_fat_g", "sugar_g", "fiber_g",
         "salt_g", "weight_g", "kj", "price_pln", "your_rating", "your_comment", "chosen_by_you", "ntfy_rating",
@@ -279,6 +410,7 @@ fn download(content_type: &str, filename: &str, body: String) -> Response {
         .into_response()
 }
 
+/// Dish photos are public NTFY content, so they need no session.
 #[derive(Deserialize)]
 struct ImageQuery {
     r: Option<String>,
@@ -288,4 +420,18 @@ async fn image(State(state): State<Shared>, Path(id): Path<String>, Query(q): Qu
     let resolution = q.r.as_deref().unwrap_or(images::TILE_RESOLUTION);
     let (content_type, bytes) = state.images.get(&state.client, &id, resolution).await?;
     Ok(([(header::CONTENT_TYPE, content_type), (header::CACHE_CONTROL, "public, max-age=31536000, immutable".to_string())], bytes).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_session_cookie() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::COOKIE, "a=1; ntfy_session=abc123; ntfy_session_x=2".parse().unwrap());
+        assert_eq!(session_cookie(&headers).as_deref(), Some("abc123"));
+        headers.insert(header::COOKIE, "ntfy_session_x=2".parse().unwrap());
+        assert_eq!(session_cookie(&headers), None);
+    }
 }

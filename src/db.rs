@@ -107,6 +107,13 @@ impl Db {
         Ok(Self(Mutex::new(conn)))
     }
 
+    /// NTFY user id the archive belongs to (from the stored diets), if known.
+    pub fn owner(&self) -> Result<Option<u64>> {
+        let conn = self.0.lock().unwrap();
+        let json: Option<String> = conn.query_row("SELECT json FROM diets LIMIT 1", [], |r| r.get(0)).optional()?;
+        Ok(json.and_then(|j| serde_json::from_str::<Value>(&j).ok()).and_then(|d| d["user_id"].as_u64()))
+    }
+
     /// Archives a merged `GET users/{id}/deliveries` response (`{results, includes}`).
     pub fn store_deliveries(&self, data: &Value) -> Result<SyncStats> {
         let includes = &data["includes"];
@@ -349,6 +356,14 @@ mod tests {
         let dishes = db.dish_history("2026-11-05").unwrap();
         assert_eq!(dishes[&7].eaten, 1);
         assert_eq!(dishes[&7].your_rating, Some(5.0));
+    }
+
+    #[test]
+    fn owner_comes_from_stored_diets() {
+        let db = Db::memory().unwrap();
+        assert_eq!(db.owner().unwrap(), None);
+        db.store_diets(&[json!({"id": 1, "user_id": 3430488, "user_diet_name": "X", "kcal": 1750})]).unwrap();
+        assert_eq!(db.owner().unwrap(), Some(3430488));
     }
 
     #[test]

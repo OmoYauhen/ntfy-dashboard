@@ -51,3 +51,26 @@ function dishDetails(d) {
     d.may_contain ? el("p", { class: "may-contain" }, d.may_contain) : null,
   );
 }
+
+/// fetch() for the dashboard API: an expired or missing login sends the user to the login page.
+async function api(url, options) {
+  const resp = await fetch(url, options);
+  if (resp.status === 401) {
+    location.replace(`/login?next=${encodeURIComponent(location.pathname)}`);
+    throw new Error("Please log in");
+  }
+  return resp;
+}
+
+/// Shows who is logged in, with a logout button, in the page header.
+async function setupAccount() {
+  const s = await fetch("/api/session").then((r) => r.json()).catch(() => null);
+  if (!s || s.demo || !s.logged_in) return;
+  $("account-name").textContent = s.name || "";
+  $("account").hidden = false;
+  $("logout").addEventListener("click", async () => {
+    await fetch("/api/logout", { method: "POST" });
+    location.replace("/login");
+  });
+}
+setupAccount();
