@@ -36,13 +36,29 @@ pub struct Meal {
 #[derive(Serialize, Clone, Debug)]
 pub struct Dish {
     pub id: u64,
+    /// The same dish in every calorie size shares this id.
+    pub configurable_id: Option<u64>,
     pub name: String,
     pub image: Option<String>,
     pub kcal: Option<f64>,
     pub protein: Option<f64>,
     pub carb: Option<f64>,
     pub fat: Option<f64>,
+    pub saturated_fat: Option<f64>,
+    pub sugar: Option<f64>,
+    pub fiber: Option<f64>,
+    pub salt: Option<f64>,
+    pub kj: Option<f64>,
+    pub weight: Option<f64>,
+    /// Average rating of all NTFY customers (1-5) and how many ratings it has.
+    pub rating: Option<f64>,
+    pub ratings_count: Option<u64>,
+    pub composition: Option<String>,
     pub allergens: Vec<String>,
+    pub may_contain: Option<String>,
+    pub tags: Vec<String>,
+    /// Filled from the local archive: how often the user had this dish before.
+    pub history: Option<crate::db::DishHistory>,
 }
 
 fn by_id(includes: &Value, name: &str) -> HashMap<u64, Value> {
@@ -60,21 +76,37 @@ fn dish(product: &Value) -> Dish {
         .and_then(|imgs| imgs.iter().find(|i| i["type"] == "MAIN").or(imgs.first()))
         .and_then(|i| i["id"].as_str())
         .map(str::to_string);
-    let allergens = product["allergens"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|a| a["tag_value"]["value"].as_str().map(str::to_string))
-        .collect();
+    let tag_values = |field: &str| -> Vec<String> {
+        product[field]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|a| a["tag_value"]["value"].as_str().map(str::to_string))
+            .collect()
+    };
+    let text = |field: &str| product[field].as_str().filter(|s| !s.is_empty()).map(str::to_string);
     Dish {
         id: product["id"].as_u64().unwrap_or_default(),
+        configurable_id: product["default_configurable_product_id"].as_u64(),
         name: product["name"].as_str().unwrap_or_default().to_string(),
         image,
         kcal: product["calorific"].as_f64(),
         protein: product["protein"].as_f64(),
         carb: product["carb"].as_f64(),
         fat: product["fat"].as_f64(),
-        allergens,
+        saturated_fat: product["saturated_fat"].as_f64(),
+        sugar: product["sugar"].as_f64(),
+        fiber: product["fiber"].as_f64(),
+        salt: product["salt"].as_f64(),
+        kj: product["kj"].as_f64(),
+        weight: product["weight"].as_f64(),
+        rating: product["rating"].as_f64(),
+        ratings_count: product["number_of_ratings"].as_u64(),
+        composition: text("composition"),
+        allergens: tag_values("allergens"),
+        may_contain: text("cross_allergen_label"),
+        tags: tag_values("work_name_tags"),
+        history: None,
     }
 }
 
@@ -223,6 +255,13 @@ pub fn demo_day_from_menu(date: &str, data: &Value, day_index: u64) -> Option<Da
         meal.selected = meal.options.first().map(|d| d.id);
     }
     Some(Day { date: date.to_string(), change_deadline: None, editable: true, menu_from: None, meals })
+}
+
+/// Attaches the user's past with each dish, as recorded in the local archive.
+pub fn attach_history(days: &mut [Day], history: &HashMap<u64, crate::db::DishHistory>) {
+    for dish in days.iter_mut().flat_map(|d| d.meals.iter_mut()).flat_map(|m| m.options.iter_mut()) {
+        dish.history = dish.configurable_id.and_then(|id| history.get(&id)).cloned();
+    }
 }
 
 /// The API uses "YYYY-MM-DD HH:MM:SS" (Polish local time) or RFC 3339.

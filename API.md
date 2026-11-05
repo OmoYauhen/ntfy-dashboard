@@ -49,7 +49,7 @@ Other routes found in the bundle: `calendar-days/{from}/{to}`, `users/{uid}/deli
 - `simple_products[]`: `name`, `images[{id,type:MAIN}]`, `calorific`, `protein`, `carb`, `fat`,
   `allergens[].tag_value.value`, and `default_configurable_product_id` (the same dish in other kcal sizes).
 
-## Changing a meal (unconfirmed)
+## Changing a meal
 
 The web panel cannot change dishes. Meal choice ("Wybór posiłków") exists only in the mobile app,
 and its code is in the missing split. Probing without auth shows which routes exist:
@@ -61,6 +61,15 @@ PATCH users/1/delivery-items/1        → 404 No route found
 ```
 
 `PATCH users/{uid}/deliveries/{did}/items/{iid}` is the only item-level write route, and the web client
-never uses it. The dashboard sends `{"simple_product_id": <alternative id>}` to it. **The body shape has
-not been checked with a real account yet.** If it's wrong, the API's validation error will name the
-expected field. The request is in `Client::change_item` in `src/orion.rs`.
+never uses it. With body `{"simple_product_id": N}` it returns `200` and the updated item in
+`data.result` (checked on 2026-11-05 by re-sending a meal's current dish). The dashboard checks that the
+returned `simple_product_id` equals the requested one, so a body the API ignores shows up as an error.
+
+## History limits
+
+- `GET users/{uid}/deliveries` never returns days older than about three days, whatever the filters
+  (`date__gte`, `date__lte`, `date`, `status__in=REALIZED`, `delivery_diet_id__in`, v3).
+- `GET users/{uid}/orders` returns all orders (prices and delivery dates only). There's no GET for a single
+  order, and expansions are rejected.
+- `GET users/{uid}/delivery-diets` returns the diet subscriptions (`user_diet_name`, `kcal`, `delivery_days`).
+- `GET diet-menu/{date}` still works for past dates, but it's the public menu, not what you got.

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NTFY meal history</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🥗</text></svg>">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="history-page">
+  <header>
+    <h1>NTFY meals</h1>
+    <nav class="pages"><a href="/">Plan</a><a href="/history" aria-current="page">History</a></nav>
+    <div class="actions">
+      <button id="sync" class="action">Sync now</button>
+      <a class="action" href="/api/export.csv">Export CSV</a>
+      <a class="action" href="/api/export.json">Export JSON</a>
+    </div>
+  </header>
+  <main>
+    <p id="note" class="note"></p>
+    <section id="summary" class="cards"></section>
+    <section id="favorites"></section>
+    <section id="history-days"></section>
+    <section id="orders"></section>
+    <p id="message" hidden></p>
+  </main>
+  <div id="toast" role="status" hidden></div>
+  <script src="/common.js"></script>
+  <script src="/history.js"></script>
+</body>
+</html>

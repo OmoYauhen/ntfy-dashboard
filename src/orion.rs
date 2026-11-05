@@ -133,29 +133,71 @@ impl Client {
         self.session().await.map(|_| ())
     }
 
-    /// Upcoming deliveries with their items and alternative meals (`data` of the response).
-    pub async fn deliveries(&self, date_from: &str) -> Result<Value> {
-        let query = [
-            ("date__gte", date_from.to_string()),
-            ("status__in", "TO-BE-REALIZED".to_string()),
-            ("expansions__in", DELIVERY_EXPANSIONS.join(",")),
-            ("limit", "100".to_string()),
-        ];
-        let value = self
-            .authed(reqwest::Method::GET, |uid| format!("users/{uid}/deliveries"), |r| r.query(&query))
-            .await?;
-        Ok(value["data"].clone())
+    /// Deliveries from `date_from` on (`status` filter optional), with their items and alternative
+    /// meals, merged over all pages into one `{results, includes}` object.
+    /// Without a status filter the API still only returns roughly the last three days of the past.
+    pub async fn deliveries(&self, date_from: Option<&str>, status: Option<&str>) -> Result<Value> {
+        const PAGE: usize = 100;
+        let mut merged = json!({ "results": [], "includes": {} });
+        for page in 0.. {
+            let mut query = vec![
+                ("expansions__in", DELIVERY_EXPANSIONS.join(",")),
+                ("limit", PAGE.to_string()),
+                ("offset", (page * PAGE).to_string()),
+            ];
+            query.extend(date_from.map(|d| ("date__gte", d.to_string())));
+            query.extend(status.map(|s| ("status__in", s.to_string())));
+            let value = self
+                .authed(reqwest::Method::GET, |uid| format!("users/{uid}/deliveries"), |r| r.query(&query))
+                .await?;
+            let data = &value["data"];
+            let results = data["results"].as_array().cloned().unwrap_or_default();
+            let count = results.len();
+            merged["results"].as_array_mut().unwrap().extend(results);
+            for (name, list) in data["includes"].as_object().into_iter().flatten() {
+                let target = merged["includes"].as_object_mut().unwrap().entry(name).or_insert_with(|| json!([]));
+                if let (Some(target), Some(list)) = (target.as_array_mut(), list.as_array()) {
+                    target.extend(list.iter().cloned());
+                }
+            }
+            if count < PAGE {
+                break;
+            }
+        }
+        Ok(merged)
+    }
+
+    /// The user's diet subscriptions (name, kcal, delivery days).
+    pub async fn delivery_diets(&self) -> Result<Vec<Value>> {
+        self.list(|uid| format!("users/{uid}/delivery-diets")).await
+    }
+
+    /// All orders with prices and delivery dates (no dishes; those are not kept by the API).
+    pub async fn orders(&self) -> Result<Vec<Value>> {
+        self.list(|uid| format!("users/{uid}/orders")).await
+    }
+
+    async fn list(&self, path: impl Fn(u64) -> String) -> Result<Vec<Value>> {
+        let value = self.authed(reqwest::Method::GET, path, |r| r.query(&[("limit", "100")])).await?;
+        Ok(value["data"]["results"].as_array().cloned().unwrap_or_default())
     }
 
     /// Replaces the product of one delivery item with one of its alternatives.
+    /// Returns the updated item; fails if the API did not take the new product.
     pub async fn change_item(&self, delivery_id: u64, item_id: u64, simple_product_id: u64) -> Result<Value> {
         let body = json!({ "simple_product_id": simple_product_id });
-        self.authed(
-            reqwest::Method::PATCH,
-            |uid| format!("users/{uid}/deliveries/{delivery_id}/items/{item_id}"),
-            |r| r.json(&body),
-        )
-        .await
+        let value = self
+            .authed(
+                reqwest::Method::PATCH,
+                |uid| format!("users/{uid}/deliveries/{delivery_id}/items/{item_id}"),
+                |r| r.json(&body),
+            )
+            .await?;
+        let item = value["data"]["result"].clone();
+        if item["simple_product_id"].as_u64() != Some(simple_product_id) {
+            bail!("NTFY did not apply the change (item now has product {})", item["simple_product_id"]);
+        }
+        Ok(item)
     }
 
     /// Public menu of all diets for a day (`data` of the response).

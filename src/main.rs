@@ -1,3 +1,4 @@
+mod db;
 mod model;
 mod orion;
 
@@ -19,6 +20,7 @@ use model::Day;
 use orion::{Client, Credentials};
 
 const DEMO_DAYS: u64 = 7;
+const SYNC_EVERY: std::time::Duration = std::time::Duration::from_secs(3600);
 
 struct AppState {
     client: Client,
@@ -27,6 +29,8 @@ struct AppState {
     read_only: bool,
     /// Demo mode keeps the menu and the selections in memory.
     demo_days: Mutex<Option<Vec<Day>>>,
+    /// Local archive of everything seen in the account (live mode only).
+    db: Option<db::Db>,
 }
 
 type Shared = Arc<AppState>;
@@ -51,20 +55,43 @@ async fn main() -> Result<()> {
     let demo = std::env::args().any(|a| a == "--demo") || std::env::var("NFTY_DEMO").is_ok_and(|v| v == "1");
     let read_only = std::env::var("NFTY_READONLY").is_ok_and(|v| v == "1");
     let creds = if demo { None } else { Some(load_credentials()?) };
-    let state = Arc::new(AppState { client: Client::new(creds)?, demo, read_only, demo_days: Mutex::new(None) });
+    let db = if demo {
+        None
+    } else {
+        let path = std::env::var("NFTY_DB").unwrap_or_else(|_| "nfty.db".to_string());
+        Some(db::Db::open(&path).with_context(|| format!("cannot open archive {path}"))?)
+    };
+    let state = Arc::new(AppState { client: Client::new(creds)?, demo, read_only, demo_days: Mutex::new(None), db });
 
     if !demo {
         match state.client.check_login().await {
             Ok(()) => println!("logged in to NTFY"),
             Err(e) => eprintln!("warning: {e:#} (the dashboard will retry on each request)"),
         }
+        let state = state.clone();
+        tokio::spawn(async move {
+            loop {
+                match sync_archive(&state).await {
+                    Ok(stats) => println!("archive synced: {stats:?}"),
+                    Err(e) => eprintln!("archive sync failed: {e:#}"),
+                }
+                tokio::time::sleep(SYNC_EVERY).await;
+            }
+        });
     }
 
     let app = Router::new()
         .route("/", get(|| async { Html(include_str!("../web/index.html")) }))
+        .route("/common.js", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../web/common.js")) }))
         .route("/app.js", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../web/app.js")) }))
         .route("/style.css", get(|| async { ([(header::CONTENT_TYPE, "text/css")], include_str!("../web/style.css")) }))
+        .route("/history", get(|| async { Html(include_str!("../web/history.html")) }))
+        .route("/history.js", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../web/history.js")) }))
         .route("/api/days", get(days))
+        .route("/api/history", get(history))
+        .route("/api/sync", post(sync_now))
+        .route("/api/export.json", get(export_json))
+        .route("/api/export.csv", get(export_csv))
         .route("/api/select", post(select))
         .route("/img/{id}", get(image))
         .with_state(state);
@@ -97,8 +124,14 @@ async fn days(State(state): State<Shared>) -> Result<Json<serde_json::Value>, Ap
         }
         cache.clone().unwrap()
     } else {
-        let today = chrono::Local::now().date_naive().to_string();
-        model::days_from_deliveries(&state.client.deliveries(&today).await?, chrono::Utc::now().fixed_offset())
+        let today = today();
+        let data = state.client.deliveries(Some(&today), Some("TO-BE-REALIZED")).await?;
+        let mut days = model::days_from_deliveries(&data, chrono::Utc::now().fixed_offset());
+        if let Some(db) = &state.db {
+            db.store_deliveries(&data)?;
+            model::attach_history(&mut days, &db.dish_history(&yesterday())?);
+        }
+        days
     };
     Ok(Json(json!({ "demo": state.demo, "read_only": state.read_only && !state.demo, "days": days })))
 }
@@ -121,6 +154,7 @@ struct SelectRequest {
     delivery_id: u64,
     item_id: u64,
     product_id: u64,
+    from_product_id: Option<u64>,
 }
 
 async fn select(State(state): State<Shared>, Json(req): Json<SelectRequest>) -> Result<Json<serde_json::Value>, AppError> {
@@ -140,7 +174,96 @@ async fn select(State(state): State<Shared>, Json(req): Json<SelectRequest>) -> 
         return Err(anyhow::anyhow!("read-only mode: changes are not sent to NTFY").into());
     }
     state.client.change_item(req.delivery_id, req.item_id, req.product_id).await?;
+    if let Some(db) = &state.db {
+        db.record_selection(req.item_id, req.from_product_id, req.product_id)?;
+    }
     Ok(Json(json!({ "ok": true })))
+}
+
+fn today() -> String {
+    chrono::Local::now().date_naive().to_string()
+}
+
+fn yesterday() -> String {
+    (chrono::Local::now().date_naive() - chrono::Days::new(1)).to_string()
+}
+
+/// Copies every delivery the API still returns (about three past days and all future ones),
+/// plus diets and orders, into the local archive.
+async fn sync_archive(state: &AppState) -> Result<db::SyncStats> {
+    let db = state.db.as_ref().context("no archive in demo mode")?;
+    let mut stats = db.store_deliveries(&state.client.deliveries(None, None).await?)?;
+    stats.diets = db.store_diets(&state.client.delivery_diets().await?)?;
+    stats.orders = db.store_orders(&state.client.orders().await?)?;
+    Ok(stats)
+}
+
+fn archive(state: &AppState) -> Result<&db::Db, AppError> {
+    state.db.as_ref().ok_or_else(|| anyhow::anyhow!("history is not available in demo mode").into())
+}
+
+async fn history(State(state): State<Shared>) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(Json(archive(&state)?.history(&today())?))
+}
+
+async fn sync_now(State(state): State<Shared>) -> Result<Json<serde_json::Value>, AppError> {
+    let stats = sync_archive(&state).await?;
+    Ok(Json(json!({ "meals": stats.meals, "products": stats.products, "orders": stats.orders, "diets": stats.diets })))
+}
+
+async fn export_json(State(state): State<Shared>) -> Result<Response, AppError> {
+    let body = serde_json::to_string_pretty(&archive(&state)?.export()?)?;
+    Ok(download("application/json", "nfty-archive.json", body))
+}
+
+/// One row per eaten meal with every nutrient, for spreadsheets.
+async fn export_csv(State(state): State<Shared>) -> Result<Response, AppError> {
+    const COLUMNS: &[&str] = &[
+        "date", "meal", "dish", "kcal", "protein_g", "carb_g", "fat_g", "saturated_fat_g", "sugar_g", "fiber_g",
+        "salt_g", "weight_g", "kj", "price_pln", "your_rating", "your_comment", "chosen_by_you", "ntfy_rating",
+        "ntfy_ratings_count", "allergens", "may_contain", "composition",
+    ];
+    let history = archive(&state)?.history(&today())?;
+    let mut out = COLUMNS.join(",") + "\n";
+    for m in history["meals"].as_array().into_iter().flatten() {
+        let p = &m["product"];
+        let allergens: Vec<&str> = p["allergens"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|a| a["tag_value"]["value"].as_str())
+            .collect();
+        let cells = [
+            m["date"].clone(), m["meal_name"].clone(), p["name"].clone(), p["calorific"].clone(), p["protein"].clone(),
+            p["carb"].clone(), p["fat"].clone(), p["saturated_fat"].clone(), p["sugar"].clone(), p["fiber"].clone(),
+            p["salt"].clone(), p["weight"].clone(), p["kj"].clone(), m["price"].clone(), m["rating"].clone(),
+            m["rating_comment"].clone(), m["user_selected"].clone(), p["rating"].clone(), p["number_of_ratings"].clone(),
+            json!(allergens.join("; ")), p["cross_allergen_label"].clone(), p["composition"].clone(),
+        ];
+        let row: Vec<String> = cells.iter().map(csv_cell).collect();
+        out += &(row.join(",") + "\n");
+    }
+    Ok(download("text/csv; charset=utf-8", "nfty-meals.csv", out))
+}
+
+fn csv_cell(v: &serde_json::Value) -> String {
+    let s = match v {
+        serde_json::Value::Null => return String::new(),
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    if s.contains([',', '"', '\n']) { format!("\"{}\"", s.replace('"', "\"\"")) } else { s }
+}
+
+fn download(content_type: &str, filename: &str, body: String) -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, content_type.to_string()),
+            (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{filename}\"")),
+        ],
+        body,
+    )
+        .into_response()
 }
 
 #[derive(Deserialize)]

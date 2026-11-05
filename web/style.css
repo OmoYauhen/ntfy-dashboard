@@ -1,4 +1,5 @@
 :root {
+  --img-h: clamp(40px, calc((100vh - 140px) / 5 - 80px), 190px);
   --bg: #f6f5f2;
   --surface: #fff;
   --text: #1d1d1b;
@@ -65,6 +66,7 @@ main { padding: 10px 20px 24px; }
   width: 32px; height: 32px; border-radius: 50%; cursor: pointer; font-size: 18px;
 }
 #day-head button:disabled { opacity: .3; cursor: default; }
+#day-head button.action { width: auto; height: auto; border-radius: 8px; font-size: 13px; color: var(--accent); }
 #day-status { color: var(--muted); font-size: 14px; flex: 1; }
 #day-status.locked { color: var(--warn); }
 
@@ -99,7 +101,7 @@ main { padding: 10px 20px 24px; }
 .tile:disabled { cursor: default; }
 .tile img {
   /* Size images from the viewport height so all five meal rows fit on one screen. */
-  width: 100%; height: clamp(40px, calc((100vh - 140px) / 5 - 80px), 190px);
+  width: 100%; height: var(--img-h);
   object-fit: cover; background: var(--line); display: block;
 }
 .tile .name {
@@ -130,8 +132,92 @@ main { padding: 10px 20px 24px; }
 #toast.error { background: #b3261e; color: #fff; }
 
 @media (max-width: 900px) {
-  .tile img { height: 100px; }
+  :root { --img-h: 100px; }
   .meal { grid-template-columns: 1fr; }
   .tiles { grid-template-columns: repeat(var(--cols, 7), 140px); overflow-x: auto; }
   header { flex-direction: column; align-items: stretch; gap: 8px; }
 }
+
+/* Pages nav and actions */
+nav.pages { display: flex; gap: 4px; }
+nav.pages a {
+  color: var(--muted); text-decoration: none; font-size: 14px; padding: 4px 10px; border-radius: 6px;
+}
+nav.pages a[aria-current="page"] { color: var(--text); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+.action {
+  border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent);
+  border-radius: 8px; padding: 5px 12px; font: inherit; font-size: 13px; font-weight: 600;
+  cursor: pointer; text-decoration: none; white-space: nowrap;
+}
+.action:disabled { opacity: .5; cursor: default; }
+.actions { display: flex; gap: 8px; margin-left: auto; }
+#day-kcal { font-size: 14px; font-weight: 600; }
+.keys { font-size: 12px; color: var(--muted); white-space: nowrap; }
+kbd {
+  font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-bottom-width: 2px;
+  border-radius: 4px; padding: 0 4px; background: var(--surface); color: var(--muted);
+}
+
+/* Planner extras */
+.meal.active { box-shadow: inset 3px 0 0 var(--accent); }
+.meal.active .meal-label { padding-left: 8px; }
+.tile kbd { position: absolute; top: 6px; left: 6px; opacity: .85; }
+.tile .badges {
+  position: absolute; left: 6px; right: 34px; display: flex; gap: 4px; flex-wrap: wrap;
+  top: calc(var(--img-h) - 24px);
+}
+.tile .badges span {
+  font-size: 10.5px; font-weight: 600; padding: 1px 5px; border-radius: 4px;
+  background: rgb(0 0 0 / .62); color: #fff; white-space: nowrap;
+}
+.tile .badges .eaten { background: rgb(47 125 79 / .9); }
+
+#popover {
+  position: fixed; z-index: 5; width: 340px; max-height: calc(100vh - 16px); overflow: auto;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 8px 30px rgb(0 0 0 / .18); padding: 0 0 12px; pointer-events: none;
+}
+#popover img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; border-radius: 12px 12px 0 0; }
+#popover h3 { font-size: 15px; margin: 10px 14px 4px; }
+#popover .hint, .hist-meal .hint { margin: 4px 14px; font-size: 12px; color: var(--accent); }
+.details { padding: 0 14px; font-size: 12.5px; }
+.details dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 8px 0; }
+.details dt { color: var(--muted); }
+.details dd { margin: 0; }
+.details .composition { line-height: 1.4; margin: 8px 0 4px; }
+.details .may-contain { color: var(--muted); font-size: 11.5px; margin: 4px 0; }
+
+/* History page */
+.history-page main { max-width: 1200px; margin: 0 auto; }
+.note { color: var(--muted); font-size: 13px; }
+.muted { color: var(--muted); }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin: 12px 0 20px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.card .label { display: block; font-size: 12px; color: var(--muted); }
+.card strong { display: block; font-size: 20px; margin: 2px 0; }
+.card .sub { font-size: 12px; color: var(--muted); }
+.history-page h2 { font-size: 16px; margin: 20px 0 8px; }
+.favorites { margin: 0; padding-left: 20px; columns: 2; font-size: 14px; line-height: 1.6; }
+.hist-day { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
+.hist-day > header {
+  position: static; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px;
+  padding: 10px 14px; border-bottom: 1px solid var(--line); background: transparent;
+}
+.hist-day h3 { margin: 0; font-size: 15px; }
+.hist-day .totals { margin-left: auto; font-size: 12.5px; color: var(--muted); }
+.hist-meal { border-top: 1px solid var(--line); }
+.hist-meal:first-of-type { border-top: 0; }
+.hist-meal summary {
+  display: grid; grid-template-columns: 64px 110px 1fr 70px 150px 40px 70px; gap: 12px; align-items: center;
+  padding: 6px 14px; cursor: pointer; list-style: none; font-size: 13.5px;
+}
+.hist-meal summary::-webkit-details-marker { display: none; }
+.hist-meal summary img { width: 64px; height: 44px; object-fit: cover; border-radius: 6px; background: var(--line); }
+.hist-meal .meal-name { color: var(--muted); font-size: 12.5px; }
+.hist-meal .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hist-meal[open] { background: var(--bg); padding-bottom: 8px; }
+.hist-meal .details { max-width: 800px; padding-left: 90px; }
+table.orders { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--surface); border-radius: 10px; overflow: hidden; }
+table.orders th, table.orders td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: left; }
+table.orders th { color: var(--muted); font-weight: 600; font-size: 12px; }
+table.orders .num { text-align: right; font-variant-numeric: tabular-nums; }

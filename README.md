@@ -26,18 +26,38 @@ Options (environment variables):
 - `NFTY_CREDS` sets the path to the credentials file.
 - `NFTY_DEMO=1` is the same as `--demo`.
 - `NFTY_READONLY=1` shows your real plan but refuses to send changes to NTFY.
+- `NFTY_DB` sets the path to the local archive (default `./nfty.db`).
 
-## UI
+## Planner
 
-- The top strip lists upcoming days with how many meals are picked (`3/5`). Locked days are dimmed.
+- The top strip lists upcoming days with how many meals are picked (`3/5`). Locked days and days whose
+  menu isn't published yet are dimmed.
 - A solid green tile is your choice. A dashed tile is the caterer's default, which you haven't confirmed.
-- Use ← / → or the arrow buttons to move between days.
-- Hover over a tile to see its full name and allergens.
+- Tiles show NTFY's community rating (★) and, from your archive, how often you had the dish (`had 2×`).
+- Hover over a tile to see everything: composition, allergens, all nutrients, weight, tags.
+- Keyboard: `1`–`9` picks a dish in the highlighted meal and moves to the next one, `Enter` keeps the
+  current dish, `↑`/`↓` changes the meal, `←`/`→` changes the day.
+- **Keep the rest** confirms the current dish for every meal you haven't chosen yet.
+- When all meals of a day are chosen, it moves on to the next open day.
+
+Every change is checked against NTFY's reply and logged in the archive.
+
+## History
+
+NTFY's API only returns deliveries from about three days back, so the dashboard archives everything
+it sees into SQLite (`nfty.db`): every meal with the full raw API JSON, all dishes with
+composition and nutrients, your ratings and comments, prices, diets, orders, and a log of the
+choices you made here. It syncs at startup, every hour, whenever the planner loads, and on
+**Sync now**. Keep it running, or at least start it every couple of days, so no day is missed.
+
+`/history` shows per-day totals, averages, your most-eaten dishes and your orders.
+`/api/export.csv` gives one row per meal with every nutrient; `/api/export.json` dumps the whole archive.
 
 ## Layout
 
 - `src/orion.rs`: API client (login and refresh, deliveries, menu, item change, image proxy).
 - `src/model.rs`: turns API responses into days → meals → dishes.
+- `src/db.rs`: SQLite archive (history, dish stats, exports).
 - `src/main.rs`: HTTP server (`/api/days`, `/api/select`, `/img/{id}`).
 - `web/`: frontend.
 - `API.md`: reverse-engineered API notes.

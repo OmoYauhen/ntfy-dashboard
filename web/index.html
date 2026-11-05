@@ -10,19 +10,25 @@
 <body>
   <header>
     <h1>NTFY meals <span id="mode" class="badge" hidden></span></h1>
+    <nav class="pages"><a href="/" aria-current="page">Plan</a><a id="history-link" href="/history" hidden>History</a></nav>
     <nav id="days" aria-label="Days"></nav>
   </header>
   <main>
     <div id="day-head">
       <button id="prev" aria-label="Previous day">‹</button>
       <h2 id="day-title"></h2>
+      <span id="day-kcal"></span>
       <span id="day-status"></span>
+      <button id="keep-rest" class="action" hidden title="Confirm the current dish for every meal you haven't chosen yet">Keep the rest</button>
+      <span class="keys"><kbd>1</kbd>–<kbd>9</kbd> pick · <kbd>Enter</kbd> keep · <kbd>↑</kbd><kbd>↓</kbd> meal · <kbd>←</kbd><kbd>→</kbd> day</span>
       <button id="next" aria-label="Next day">›</button>
     </div>
     <div id="meals"></div>
     <p id="message" hidden></p>
   </main>
+  <div id="popover" hidden></div>
   <div id="toast" role="status" hidden></div>
+  <script src="/common.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
