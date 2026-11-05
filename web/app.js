@@ -54,7 +54,8 @@ function tile(day, meal, dish, index) {
   return el(
     "button",
     {
-      class: `tile${selected ? " selected" : ""}${selected && !meal.user_selected ? " default" : ""}`,
+      class: `tile${selected ? " selected" : ""}${selected && !meal.user_selected ? " default" : ""}${dish.history ? " eaten-before" : ""}`,
+      title: dish.history ? `You had this dish ${dish.history.eaten}×, last on ${dish.history.last_eaten}` : null,
       disabled: !day.editable,
       "aria-pressed": String(selected),
       "aria-label": dish.name,
@@ -118,7 +119,7 @@ function openZoom(day, meal, dish, anchor) {
     dishDetails(dish),
     action ? el("p", { class: "zoom-action" }, action) : null,
   ].filter(Boolean));
-  card.className = [selected && "selected", selected && !meal.user_selected && "default", !day.editable && "locked"]
+  card.className = [selected && "selected", selected && !meal.user_selected && "default", !day.editable && "locked", dish.history && "eaten-before"]
     .filter(Boolean).join(" ");
   card.onclick = day.editable ? () => { closeZoom(true); choose(day, meal, dish, null); } : null;
   card.onpointerleave = (e) => { if (e.relatedTarget !== anchor) closeZoom(); };

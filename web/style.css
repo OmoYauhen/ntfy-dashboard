@@ -8,6 +8,7 @@
   --accent: #2f7d4f;
   --accent-soft: #e3f1e8;
   --warn: #9a5b00;
+  --past: #d08a00;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   color: var(--text);
   background: var(--bg);
@@ -23,6 +24,7 @@
     --accent: #5cc285;
     --accent-soft: #1f3a2a;
     --warn: #e0a447;
+    --past: #f0b13a;
   }
 }
 
@@ -170,7 +172,10 @@ kbd {
   font-size: 10.5px; font-weight: 600; padding: 1px 5px; border-radius: 4px;
   background: rgb(0 0 0 / .62); color: #fff; white-space: nowrap;
 }
-.badges .eaten { background: rgb(47 125 79 / .9); }
+.badges .eaten { background: var(--past); color: #1d1d1b; }
+/* Dish you already had: a frame outside the tile, so it combines with the chosen/default border. */
+.tile.eaten-before, #zoom.eaten-before { outline: 2px solid var(--past); outline-offset: 2px; }
+.legend-past { display: inline-block; width: 10px; height: 10px; border-radius: 3px; outline: 2px solid var(--past); outline-offset: 1px; margin: 0 4px 0 2px; vertical-align: -1px; }
 
 #zoom {
   position: fixed; z-index: 5; top: 0; left: 0;
