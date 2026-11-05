@@ -54,13 +54,13 @@ impl IntoResponse for AppError {
 async fn main() -> Result<()> {
     // A missing .env is fine: the variables may come from the real environment.
     let _ = dotenvy::dotenv();
-    let demo = std::env::args().any(|a| a == "--demo") || std::env::var("NFTY_DEMO").is_ok_and(|v| v == "1");
-    let read_only = std::env::var("NFTY_READONLY").is_ok_and(|v| v == "1");
+    let demo = std::env::args().any(|a| a == "--demo") || std::env::var("NTFY_DEMO").is_ok_and(|v| v == "1");
+    let read_only = std::env::var("NTFY_READONLY").is_ok_and(|v| v == "1");
     let creds = if demo { None } else { Some(load_credentials()?) };
     let db = if demo {
         None
     } else {
-        let path = std::env::var("NFTY_DB").unwrap_or_else(|_| "nfty.db".to_string());
+        let path = std::env::var("NTFY_DB").unwrap_or_else(|_| "ntfy.db".to_string());
         Some(db::Db::open(&path).with_context(|| format!("cannot open archive {path}"))?)
     };
     let state = Arc::new(AppState { client: Client::new(creds)?, demo, read_only, demo_days: Mutex::new(None), db });
@@ -98,20 +98,20 @@ async fn main() -> Result<()> {
         .route("/img/{id}", get(image))
         .with_state(state);
 
-    let bind = std::env::var("NFTY_BIND").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
+    let bind = std::env::var("NTFY_BIND").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     let mode = if demo { " (demo)" } else if read_only { " (read-only)" } else { "" };
-    println!("nfty-dashboard{mode} on http://{bind}");
+    println!("ntfy-dashboard{mode} on http://{bind}");
     axum::serve(listener, app).await?;
     Ok(())
 }
 
-/// NFTY_EMAIL and NFTY_PASSWORD, from the environment or `.env`.
+/// NTFY_EMAIL and NTFY_PASSWORD, from the environment or `.env`.
 fn load_credentials() -> Result<Credentials> {
     let var = |name: &str| {
         std::env::var(name).with_context(|| format!("{name} is not set (see .env.example, or run with --demo)"))
     };
-    Ok(Credentials { email: var("NFTY_EMAIL")?, password: var("NFTY_PASSWORD")? })
+    Ok(Credentials { email: var("NTFY_EMAIL")?, password: var("NTFY_PASSWORD")? })
 }
 
 async fn days(State(state): State<Shared>) -> Result<Json<serde_json::Value>, AppError> {
@@ -211,7 +211,7 @@ async fn sync_now(State(state): State<Shared>) -> Result<Json<serde_json::Value>
 
 async fn export_json(State(state): State<Shared>) -> Result<Response, AppError> {
     let body = serde_json::to_string_pretty(&archive(&state)?.export()?)?;
-    Ok(download("application/json", "nfty-archive.json", body))
+    Ok(download("application/json", "ntfy-archive.json", body))
 }
 
 /// One row per eaten meal with every nutrient, for spreadsheets.
@@ -241,7 +241,7 @@ async fn export_csv(State(state): State<Shared>) -> Result<Response, AppError> {
         let row: Vec<String> = cells.iter().map(csv_cell).collect();
         out += &(row.join(",") + "\n");
     }
-    Ok(download("text/csv; charset=utf-8", "nfty-meals.csv", out))
+    Ok(download("text/csv; charset=utf-8", "ntfy-meals.csv", out))
 }
 
 fn csv_cell(v: &serde_json::Value) -> String {

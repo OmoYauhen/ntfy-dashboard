@@ -1,4 +1,4 @@
-# nfty-dashboard
+# ntfy-dashboard
 
 An at-a-glance meal picker for [Nice To Fit You](https://ntfy.pl). It replaces the app's swipe-through
 menu with one screen per day: 5 meal rows, each showing every dish you can choose. Click a tile to
@@ -22,10 +22,10 @@ cargo run --release -- --demo
 ```
 
 Options (environment variables, or `.env`):
-- `NFTY_BIND` sets the listen address (default `127.0.0.1:8080`).
-- `NFTY_DEMO=1` is the same as `--demo`.
-- `NFTY_READONLY=1` shows your real plan but refuses to send changes to NTFY.
-- `NFTY_DB` sets the path to the local archive (default `./nfty.db`).
+- `NTFY_BIND` sets the listen address (default `127.0.0.1:8080`).
+- `NTFY_DEMO=1` is the same as `--demo`.
+- `NTFY_READONLY=1` shows your real plan but refuses to send changes to NTFY.
+- `NTFY_DB` sets the path to the local archive (default `./ntfy.db`).
 
 ## Planner
 
@@ -44,7 +44,7 @@ Every change is checked against NTFY's reply and logged in the archive.
 ## History
 
 NTFY's API only returns deliveries from about three days back, so the dashboard archives everything
-it sees into SQLite (`nfty.db`): every meal with the full raw API JSON, all dishes with
+it sees into SQLite (`ntfy.db`): every meal with the full raw API JSON, all dishes with
 composition and nutrients, your ratings and comments, prices, diets, orders, and a log of the
 choices you made here. It syncs at startup, every hour, whenever the planner loads, and on
 **Sync now**. Keep it running, or at least start it every couple of days, so no day is missed.

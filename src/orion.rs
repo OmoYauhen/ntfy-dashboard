@@ -59,7 +59,7 @@ struct SessionData {
 impl Client {
     pub fn new(creds: Option<Credentials>) -> Result<Self> {
         let http = reqwest::Client::builder()
-            .user_agent("nfty-dashboard")
+            .user_agent("ntfy-dashboard")
             .timeout(std::time::Duration::from_secs(45))
             .build()?;
         Ok(Self { http, creds, session: Mutex::new(None) })
