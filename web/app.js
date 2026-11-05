@@ -6,6 +6,8 @@ const state = { days: [], current: 0 };
 const $ = (id) => document.getElementById(id);
 
 const isPicked = (day) => day.meals.every((m) => m.user_selected);
+const hasMenu = (day) => day.meals.some((m) => m.options.length);
+const isOpen = (day) => day.editable && hasMenu(day) && !isPicked(day);
 const pickedCount = (day) => day.meals.filter((m) => m.user_selected).length;
 
 const dateLabel = (iso, opts) =>
@@ -39,13 +41,14 @@ function renderDays() {
       el(
         "button",
         {
-          class: [i === state.current && "current", isPicked(day) && "done", !day.editable && "locked"]
+          class: [i === state.current && "current", isPicked(day) && "done", !(day.editable && hasMenu(day)) && "locked"]
             .filter(Boolean).join(" "),
           title: day.editable ? "" : "Menu can no longer be changed",
           onclick: () => show(i),
         },
         dateLabel(day.date, { weekday: "short", day: "numeric", month: "numeric" }),
-        el("span", { class: "count" }, day.editable ? `${pickedCount(day)}/${day.meals.length}` : "locked"),
+        el("span", { class: "count" },
+          !day.editable ? "locked" : !hasMenu(day) ? "no menu" : `${pickedCount(day)}/${day.meals.length}`),
       ),
     ),
   );
@@ -87,9 +90,16 @@ function renderDay() {
   const status = $("day-status");
   status.className = day.editable ? "" : "locked";
   if (!day.editable) status.textContent = "Menu locked for this day";
+  else if (!hasMenu(day)) {
+    status.textContent = day.menu_from
+      ? `Menu not published yet, available from ${dateLabel(day.menu_from.slice(0, 10), { weekday: "long", day: "numeric", month: "long" })}`
+      : "Menu not published yet";
+  }
   else if (isPicked(day)) status.textContent = "All meals chosen";
   else status.textContent = `${pickedCount(day)} of ${day.meals.length} meals chosen`;
 
+  // One column per option of the largest meal, so every meal stays on a single row.
+  $("meals").style.setProperty("--cols", Math.max(1, ...day.meals.map((m) => m.options.length)));
   $("meals").replaceChildren(
     ...day.meals.map((meal) =>
       el(
@@ -139,7 +149,7 @@ async function choose(day, meal, dish, button) {
   }
 
   if (!wasPicked && isPicked(day) && state.days[state.current] === day) {
-    const next = state.days.findIndex((d, i) => i > state.current && d.editable && !isPicked(d));
+    const next = state.days.findIndex((d, i) => i > state.current && isOpen(d));
     toast(next === -1 ? "All days planned 🎉" : "Day complete → next day");
     if (next !== -1) setTimeout(() => state.days[state.current] === day && show(next), ADVANCE_DELAY_MS);
   }
@@ -153,14 +163,15 @@ async function load() {
     const resp = await fetch("/api/days");
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || resp.statusText);
-    $("mode").hidden = !data.demo;
+    $("mode").hidden = !(data.demo || data.read_only);
+    $("mode").textContent = data.demo ? "demo" : "read-only";
     state.days = data.days;
     if (!state.days.length) {
       msg.textContent = "No upcoming deliveries with a menu to choose.";
       return;
     }
     msg.hidden = true;
-    const firstOpen = state.days.findIndex((d) => d.editable && !isPicked(d));
+    const firstOpen = state.days.findIndex(isOpen);
     show(firstOpen === -1 ? 0 : firstOpen);
   } catch (err) {
     msg.textContent = `Could not load deliveries: ${err.message}`;

@@ -25,6 +25,7 @@ Options (environment variables):
 - `NFTY_BIND` sets the listen address (default `127.0.0.1:8080`).
 - `NFTY_CREDS` sets the path to the credentials file.
 - `NFTY_DEMO=1` is the same as `--demo`.
+- `NFTY_READONLY=1` shows your real plan but refuses to send changes to NTFY.
 
 ## UI
 

@@ -50,7 +50,7 @@ h1 { font-size: 18px; margin: 0; white-space: nowrap; }
 #days button {
   border: 1px solid var(--line); background: var(--surface); color: var(--text);
   border-radius: 8px; padding: 6px 10px; cursor: pointer; text-align: center;
-  font: inherit; font-size: 13px; line-height: 1.2; min-width: 64px;
+  font: inherit; font-size: 13px; line-height: 1.2; white-space: nowrap; flex: none;
 }
 #days button .count { display: block; font-size: 11px; color: var(--muted); }
 #days button.done .count { color: var(--accent); }
@@ -82,7 +82,7 @@ main { padding: 10px 20px 24px; }
 
 .tiles {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--cols, 7), minmax(0, 1fr));
   gap: 10px;
 }
 .tile {
@@ -106,7 +106,10 @@ main { padding: 10px 20px 24px; }
   font-size: 12.5px; line-height: 1.3; padding: 6px 8px 2px;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.tile .facts { font-size: 11px; color: var(--muted); padding: 2px 8px 6px; margin-top: auto; }
+.tile .facts {
+  font-size: 11px; color: var(--muted); padding: 2px 8px 6px; margin-top: auto;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .tile.selected { border-color: var(--accent); background: var(--accent-soft); }
 .tile.selected::after {
   content: "✓"; position: absolute; top: 6px; right: 6px;
@@ -129,6 +132,6 @@ main { padding: 10px 20px 24px; }
 @media (max-width: 900px) {
   .tile img { height: 100px; }
   .meal { grid-template-columns: 1fr; }
-  .tiles { grid-template-columns: repeat(7, 140px); overflow-x: auto; }
+  .tiles { grid-template-columns: repeat(var(--cols, 7), 140px); overflow-x: auto; }
   header { flex-direction: column; align-items: stretch; gap: 8px; }
 }

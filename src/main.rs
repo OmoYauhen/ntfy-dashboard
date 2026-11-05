@@ -23,6 +23,8 @@ const DEMO_DAYS: u64 = 7;
 struct AppState {
     client: Client,
     demo: bool,
+    /// Live mode without writes: selecting a dish is refused instead of sent to NTFY.
+    read_only: bool,
     /// Demo mode keeps the menu and the selections in memory.
     demo_days: Mutex<Option<Vec<Day>>>,
 }
@@ -47,8 +49,9 @@ impl IntoResponse for AppError {
 #[tokio::main]
 async fn main() -> Result<()> {
     let demo = std::env::args().any(|a| a == "--demo") || std::env::var("NFTY_DEMO").is_ok_and(|v| v == "1");
+    let read_only = std::env::var("NFTY_READONLY").is_ok_and(|v| v == "1");
     let creds = if demo { None } else { Some(load_credentials()?) };
-    let state = Arc::new(AppState { client: Client::new(creds)?, demo, demo_days: Mutex::new(None) });
+    let state = Arc::new(AppState { client: Client::new(creds)?, demo, read_only, demo_days: Mutex::new(None) });
 
     if !demo {
         match state.client.check_login().await {
@@ -68,7 +71,8 @@ async fn main() -> Result<()> {
 
     let bind = std::env::var("NFTY_BIND").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
     let listener = tokio::net::TcpListener::bind(&bind).await?;
-    println!("nfty-dashboard{} on http://{bind}", if demo { " (demo)" } else { "" });
+    let mode = if demo { " (demo)" } else if read_only { " (read-only)" } else { "" };
+    println!("nfty-dashboard{mode} on http://{bind}");
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -96,7 +100,7 @@ async fn days(State(state): State<Shared>) -> Result<Json<serde_json::Value>, Ap
         let today = chrono::Local::now().date_naive().to_string();
         model::days_from_deliveries(&state.client.deliveries(&today).await?, chrono::Utc::now().fixed_offset())
     };
-    Ok(Json(json!({ "demo": state.demo, "days": days })))
+    Ok(Json(json!({ "demo": state.demo, "read_only": state.read_only && !state.demo, "days": days })))
 }
 
 async fn load_demo_days(client: &Client) -> Result<Vec<Day>> {
@@ -131,6 +135,9 @@ async fn select(State(state): State<Shared>, Json(req): Json<SelectRequest>) -> 
         meal.selected = Some(req.product_id);
         meal.user_selected = true;
         return Ok(Json(json!({ "ok": true })));
+    }
+    if state.read_only {
+        return Err(anyhow::anyhow!("read-only mode: changes are not sent to NTFY").into());
     }
     state.client.change_item(req.delivery_id, req.item_id, req.product_id).await?;
     Ok(Json(json!({ "ok": true })))

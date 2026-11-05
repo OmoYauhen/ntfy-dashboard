@@ -15,6 +15,8 @@ pub struct Day {
     /// Last moment the menu for this day can still be changed (ISO, from the API).
     pub change_deadline: Option<String>,
     pub editable: bool,
+    /// When NTFY publishes the menu for this day; before that the meals have no dishes.
+    pub menu_from: Option<String>,
     pub meals: Vec<Meal>,
 }
 
@@ -120,6 +122,7 @@ pub fn days_from_deliveries(data: &Value, now: chrono::DateTime<chrono::FixedOff
             date,
             change_deadline: deadline.clone(),
             editable,
+            menu_from: delivery["show_menu_from"].as_str().map(str::to_string),
             meals: vec![],
         });
         day.editable |= editable;
@@ -219,7 +222,7 @@ pub fn demo_day_from_menu(date: &str, data: &Value, day_index: u64) -> Option<Da
     for meal in &mut meals {
         meal.selected = meal.options.first().map(|d| d.id);
     }
-    Some(Day { date: date.to_string(), change_deadline: None, editable: true, meals })
+    Some(Day { date: date.to_string(), change_deadline: None, editable: true, menu_from: None, meals })
 }
 
 /// The API uses "YYYY-MM-DD HH:MM:SS" (Polish local time) or RFC 3339.
