@@ -48,8 +48,27 @@ inputs.ntfy-dashboard.url = "github:OmoYauhen/ntfy-dashboard";
 # in the host's modules
 imports = [ inputs.ntfy-dashboard.nixosModules.default ];
 
-# or, without flakes
-imports = [ "${builtins.fetchGit { url = "git@github.com:OmoYauhen/ntfy-dashboard.git"; rev = "…"; }}/nix/module.nix" ];
+# or, without flakes: the module from a release tag, plus that release's prebuilt binary
+let
+  version = "0.1.1";
+  src = builtins.fetchTarball {
+    url = "https://github.com/OmoYauhen/ntfy-dashboard/archive/v${version}.tar.gz";
+    sha256 = "…";
+  };
+in {
+  imports = [ "${src}/nix/module.nix" ];
+  services.ntfy-dashboard.package = pkgs.stdenvNoCC.mkDerivation {
+    pname = "ntfy-dashboard";
+    inherit version;
+    src = pkgs.fetchurl {
+      url = "https://github.com/OmoYauhen/ntfy-dashboard/releases/download/v${version}/ntfy-dashboard-v${version}-x86_64-unknown-linux-musl";
+      hash = "sha256-…";
+    };
+    dontUnpack = true;
+    installPhase = "install -Dm755 $src $out/bin/ntfy-dashboard";
+    meta.mainProgram = "ntfy-dashboard";
+  };
+}
 
 services.ntfy-dashboard = {
   enable = true;
@@ -61,8 +80,18 @@ services.ntfy-dashboard = {
 Behind the reverse proxy, the session cookie gets `Secure` when the proxy sends
 `X-Forwarded-Proto: https`, and failed logins are counted per `X-Forwarded-For` client.
 
+Without `package`, the module compiles the server from source with the host's nixpkgs.
+
+## Releases
+
+Every merge to `main` runs the tests, builds a fully static musl binary (the web UI is embedded),
+smoke-tests it in demo mode and publishes it as a GitHub Release with the next patch version
+(`.github/workflows/release.yml`). The binary runs on any x86_64 Linux, NixOS included, with no
+dependencies.
+
 It runs at <https://ntfy.yauhen.io> on n1x1e, deployed from the
-[nixie](https://github.com/OmoYauhen/nixie) hive (`modules/ntfy-dashboard.nix`).
+[nixie](https://github.com/OmoYauhen/nixie) hive (`modules/ntfy-dashboard.nix`), which pins a
+release's module and binary by hash.
 
 ## Login
 
