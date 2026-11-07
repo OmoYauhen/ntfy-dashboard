@@ -52,25 +52,12 @@ function dishDetails(d) {
   );
 }
 
-/// fetch() for the dashboard API: an expired or missing login sends the user to the login page.
-async function api(url, options) {
-  const resp = await fetch(url, options);
-  if (resp.status === 401) {
-    location.replace(`/login?next=${encodeURIComponent(location.pathname)}`);
-    throw new Error("Please log in");
-  }
-  return resp;
-}
-
-/// Shows who is logged in, with a logout button, in the page header.
+/// Shows which NTFY account the dashboard uses, or why it isn't connected, in the page header.
 async function setupAccount() {
   const s = await fetch("/api/session").then((r) => r.json()).catch(() => null);
-  if (!s || s.demo || !s.logged_in) return;
-  $("account-name").textContent = s.name || "";
+  if (!s || s.demo) return;
+  $("account-name").textContent = s.connected ? s.name || "" : `Not connected to NTFY: ${s.error || "logging in…"}`;
+  $("account").classList.toggle("error", !s.connected);
   $("account").hidden = false;
-  $("logout").addEventListener("click", async () => {
-    await fetch("/api/logout", { method: "POST" });
-    location.replace("/login");
-  });
 }
 setupAccount();

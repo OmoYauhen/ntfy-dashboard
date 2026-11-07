@@ -130,7 +130,7 @@ function renderOrders(orders) {
 async function load() {
   const msg = $("message");
   try {
-    const resp = await api("/api/history");
+    const resp = await fetch("/api/history");
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || resp.statusText);
     const meals = data.meals.map((m) => ({ ...m, dish: toDish(m.product) }));
@@ -158,7 +158,7 @@ $("sync").addEventListener("click", async (e) => {
   const button = e.currentTarget;
   button.disabled = true;
   try {
-    const resp = await api("/api/sync", { method: "POST" });
+    const resp = await fetch("/api/sync", { method: "POST" });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || resp.statusText);
     toast(`Synced ${data.meals} meals, ${data.orders} orders`);

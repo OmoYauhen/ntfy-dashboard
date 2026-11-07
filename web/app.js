@@ -260,7 +260,7 @@ function show(index) {
 }
 
 async function save(meal, dish, fromId) {
-  const resp = await api("/api/select", {
+  const resp = await fetch("/api/select", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -325,7 +325,7 @@ async function load({ refresh = false } = {}) {
     msg.textContent = "Loading menu…";
   }
   try {
-    const resp = await api("/api/days");
+    const resp = await fetch("/api/days");
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || resp.statusText);
     state.loadedAt = Date.now();

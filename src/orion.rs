@@ -50,12 +50,12 @@ pub struct Account {
 
 pub struct Client {
     http: reqwest::Client,
-    /// Set by `login`, cleared by `logout`; used to log in again when the NTFY session expires.
+    /// Set by `login`; used to log in again when the NTFY session expires.
     creds: std::sync::Mutex<Option<Credentials>>,
     session: Mutex<Option<Session>>,
 }
 
-/// No one is logged in (or they logged out).
+/// The startup login hasn't succeeded (yet).
 #[derive(Debug)]
 pub struct NotLoggedIn;
 
@@ -67,17 +67,6 @@ impl std::fmt::Display for NotLoggedIn {
 
 impl std::error::Error for NotLoggedIn {}
 
-/// The credentials work, but the account is not on the dashboard's allowlist.
-#[derive(Debug)]
-pub struct NotAllowed;
-
-impl std::fmt::Display for NotAllowed {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("account not allowed")
-    }
-}
-
-impl std::error::Error for NotAllowed {}
 
 #[derive(Deserialize)]
 struct Envelope<T> {
@@ -126,26 +115,14 @@ impl Client {
         session_from(value)
     }
 
-    /// Checks the credentials with NTFY and, if they work for an `allowed` account, keeps them in memory.
-    pub async fn login(&self, creds: Credentials, allowed: impl Fn(&Account) -> bool) -> Result<Account> {
+    /// Checks the credentials with NTFY and, if they work, keeps them in memory to log in again
+    /// whenever the NTFY session expires.
+    pub async fn login(&self, creds: Credentials) -> Result<Account> {
         let session = self.sign_in(&creds).await?;
         let account = Account { user_id: session.user_id, first_name: session.first_name.clone() };
-        if !allowed(&account) {
-            bail!(NotAllowed);
-        }
         *self.creds.lock().unwrap() = Some(creds);
         *self.session.lock().await = Some(session);
         Ok(account)
-    }
-
-    /// Forgets the credentials and the NTFY session.
-    pub async fn logout(&self) {
-        self.creds.lock().unwrap().take();
-        self.session.lock().await.take();
-    }
-
-    pub fn is_logged_in(&self) -> bool {
-        self.creds.lock().unwrap().is_some()
     }
 
     /// Logs in again with the stored credentials (the NTFY session expired).

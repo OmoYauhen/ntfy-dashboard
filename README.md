@@ -15,7 +15,7 @@ with a C compiler works (SQLite is built in).
 ```sh
 nix develop
 cargo run -- --demo        # no account needed: public menu, choices kept in memory
-cargo run                  # real account: open http://127.0.0.1:8080 and log in
+NTFY_EMAIL=… NTFY_PASSWORD=… cargo run   # real account on http://127.0.0.1:8080
 cargo test
 cargo watch -x 'run -- --demo'
 ```
@@ -29,8 +29,8 @@ nix run . -- --demo
 
 Options (environment variables, or `.env`; see `.env.example`):
 - `NTFY_BIND` sets the listen address (default `127.0.0.1:8080`).
-- `NTFY_ALLOWED_USERS` is a comma-separated list of NTFY user ids that may log in. Set it whenever
-  other people can reach the dashboard; empty allows any NTFY account.
+- `NTFY_EMAIL` and `NTFY_PASSWORD`, or `NTFY_CREDENTIALS_FILE` (a file holding `email:password`), or the
+  systemd credential `ntfy-credentials`: the NTFY account. Required except in demo mode.
 - `NTFY_DEMO=1` is the same as `--demo`.
 - `NTFY_READONLY=1` shows your real plan but refuses to send changes to NTFY.
 - `NTFY_DATA_DIR` sets where the per-account archives `ntfy-<user id>.db` live (default `.`).
@@ -72,13 +72,24 @@ in {
 
 services.ntfy-dashboard = {
   enable = true;
-  port = 8440;                 # listens on 127.0.0.1; put a TLS reverse proxy in front
-  allowedUsers = [ 1234567 ];  # your NTFY user id (logged on every login)
+  port = 8440;                 # listens on 127.0.0.1 only
+  credentialsFile = ./secrets/ntfy-dashboard.cred;
 };
 ```
 
-Behind the reverse proxy, the session cookie gets `Secure` when the proxy sends
-`X-Forwarded-Proto: https`, and failed logins are counted per `X-Forwarded-For` client.
+`credentialsFile` is a `systemd-creds` blob holding `email:password`. Create it on the machine that
+runs the service; with `--with-key=tpm2` only that machine's TPM can decrypt it, so the blob is safe in
+git and in the Nix store. In fish:
+
+```fish
+read -P 'NTFY email: ' email; read -s -P 'NTFY password: ' pw
+printf '%s:%s' $email $pw | sudo systemd-creds encrypt --with-key=tpm2 --name=ntfy-credentials - ntfy-dashboard.cred
+set -e pw
+```
+
+systemd decrypts it at start into a memory-only directory that only the service can read. For a
+plain file from agenix or sops-nix instead, set `encryptedCredentials = false` and point
+`credentialsFile` at its runtime path (a string, so it isn't copied into the store).
 
 Without `package`, the module compiles the server from source with the host's nixpkgs.
 
@@ -89,24 +100,18 @@ smoke-tests it in demo mode and publishes it as a GitHub Release with the next p
 (`.github/workflows/release.yml`). The binary runs on any x86_64 Linux, NixOS included, with no
 dependencies.
 
-It runs at <https://ntfy.yauhen.io> on n1x1e, deployed from the
-[nixie](https://github.com/OmoYauhen/nixie) hive (`modules/ntfy-dashboard.nix`), which pins a
-release's module and binary by hash.
+It runs on fenek, configured in the `fl` flake, behind nginx at <http://ntfy.yauhen.io>. That
+name resolves to fenek's Tailscale address, so only the tailnet can reach it.
 
-## Login
+## Access
 
-There are no stored credentials. The login page checks your email and password with NTFY and the
-server keeps them in memory only (wiped on logout), so it can log in again when NTFY's session
-expires. They're gone after **Log out** or a server restart; until you log in again the hourly
-archive sync pauses.
+There is no login screen. The server logs in to NTFY with the configured credentials at startup,
+retrying until it works, and stays logged in. Retries come every minute after network errors, but
+only every 30 minutes if NTFY rejects the password, so a wrong password can't get the account
+locked. Until it's connected, the header shows the reason.
 
-Each browser that logs in gets its own session cookie (HttpOnly, 30 days). Everything except dish
-photos requires it, so people who can reach the URL can't see or change your plan. Logging out
-ends every browser's session.
-
-Only accounts in `NTFY_ALLOWED_USERS` can log in; others are rejected even with a correct password.
-Failed logins are limited to 5 per client and 20 overall per 15 minutes, so the login page can't
-be used to guess NTFY passwords or get your NTFY account locked.
+Because anyone who can reach the dashboard can see and change your plan, it must only be
+reachable from a private network. The module listens on `127.0.0.1` by default.
 
 ## Planner
 
@@ -147,7 +152,7 @@ choices you made here. It syncs at startup, every hour, whenever the planner loa
 - `src/model.rs`: turns API responses into days → meals → dishes.
 - `src/db.rs`: SQLite archive (history, dish stats, exports).
 - `src/images.rs`: photo disk cache and prefetching.
-- `src/main.rs`: HTTP server, login and sessions, sync loop, exports.
+- `src/main.rs`: HTTP server, startup login, sync loop, exports.
 - `web/`: frontend.
 - `nix/package.nix`, `nix/module.nix`, `flake.nix`: package, NixOS module, dev shell.
 - `API.md`: reverse-engineered API notes.

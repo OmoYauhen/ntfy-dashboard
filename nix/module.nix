@@ -20,7 +20,10 @@ in
     listenAddress = lib.mkOption {
       type = lib.types.str;
       default = "127.0.0.1";
-      description = "Address to listen on. Keep it local and put a TLS reverse proxy in front.";
+      description = ''
+        Address to listen on. There is no login, so keep it local and put a reverse proxy in front
+        that only your private network (e.g. Tailscale) can reach.
+      '';
     };
 
     port = lib.mkOption {
@@ -29,13 +32,25 @@ in
       description = "Port to listen on.";
     };
 
-    allowedUsers = lib.mkOption {
-      type = lib.types.listOf lib.types.ints.unsigned;
-      default = [ ];
-      example = [ 4242 ];
+    credentialsFile = lib.mkOption {
+      type = lib.types.path;
+      example = lib.literalExpression "./secrets/ntfy-dashboard.cred";
       description = ''
-        NTFY user ids allowed to log in (the `id` of the account, shown in the server log on
-        login). Empty allows any NTFY account, which you only want on a private network.
+        NTFY login as `email:password`, handed to the service as the systemd credential
+        `ntfy-credentials`. By default this is a `systemd-creds encrypt` blob (see
+        `encryptedCredentials`), which is safe to keep in git and in the Nix store. Pipe
+        `email:password` into `sudo systemd-creds encrypt --with-key=tpm2
+        --name=ntfy-credentials - ntfy-dashboard.cred` (read the password with `read -s`, so it
+        doesn't end up in shell history). With `--with-key=tpm2`, only this machine can decrypt it.
+      '';
+    };
+
+    encryptedCredentials = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Whether `credentialsFile` is encrypted with `systemd-creds` (LoadCredentialEncrypted=).
+        Set to false for a plain file outside the Nix store, e.g. from agenix or sops-nix.
       '';
     };
 
@@ -47,9 +62,6 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    warnings = lib.optional (cfg.allowedUsers == [ ])
-      "services.ntfy-dashboard.allowedUsers is empty: any NTFY account can log in.";
-
     users.users.ntfy-dashboard = {
       isSystemUser = true;
       group = "ntfy-dashboard";
@@ -63,16 +75,18 @@ in
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
 
-      # No credentials here: users log in on the web page, and the server keeps them in memory.
       environment = {
         NTFY_BIND = "${cfg.listenAddress}:${toString cfg.port}";
         NTFY_DATA_DIR = stateDir;
         NTFY_IMAGE_CACHE = "${stateDir}/cache/images";
-        NTFY_ALLOWED_USERS = lib.concatMapStringsSep "," toString cfg.allowedUsers;
       } // lib.optionalAttrs cfg.readOnly { NTFY_READONLY = "1"; };
 
       serviceConfig = {
         ExecStart = lib.getExe cfg.package;
+        # systemd decrypts the login into a private, memory-only directory ($CREDENTIALS_DIRECTORY)
+        # that only this service can read.
+        ${if cfg.encryptedCredentials then "LoadCredentialEncrypted" else "LoadCredential"} =
+          "ntfy-credentials:${cfg.credentialsFile}";
         User = "ntfy-dashboard";
         Group = "ntfy-dashboard";
         # Holds the per-account archives (ntfy-<user id>.db) and the photo cache.
