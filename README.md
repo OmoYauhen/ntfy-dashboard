@@ -146,12 +146,33 @@ choices you made here. It syncs at startup, every hour, whenever the planner loa
 `/history` shows per-day totals, averages, your most-eaten dishes and your orders.
 `/api/export.csv` gives one row per meal with every nutrient; `/api/export.json` dumps the whole archive.
 
+## API for assistants
+
+A read-only JSON API with no auth, for a personal assistant agent or for scripts. `GET /api` returns
+its OpenAPI 3.1 spec, with descriptions written for an LLM to read. All data comes from the local
+archive, so past days that NTFY no longer returns are included.
+
+| Endpoint | What |
+|---|---|
+| `GET /api/v1/status` | today's date, the NTFY connection, the archive's date range and last sync |
+| `GET /api/v1/days?from=&to=&alternatives=` | delivery days with meals, dishes, daily totals and the change deadline (default: 7 days back to 14 ahead) |
+| `GET /api/v1/days/{date}` | one day, including the selectable alternatives for each meal |
+| `GET /api/v1/dishes/{id}` | ingredients, allergens, all nutrients, tags, and how often you had it |
+| `GET /api/v1/stats?from=&to=` | daily averages, totals, most-eaten dishes, your ratings |
+| `GET /api/v1/orders` | diet subscriptions and orders with prices |
+| `POST /api/sync` | sync with NTFY now instead of waiting for the hourly sync |
+
+```sh
+curl -s http://ntfy.yauhen.io/api/v1/days/2026-11-12 | jq '.meals[] | {meal, dish: .dish.name, kcal: .dish.kcal}'
+```
+
 ## Layout
 
 - `src/orion.rs`: API client (login and refresh, deliveries, menu, item change, image proxy).
 - `src/model.rs`: turns API responses into days → meals → dishes.
 - `src/db.rs`: SQLite archive (history, dish stats, exports).
 - `src/images.rs`: photo disk cache and prefetching.
+- `src/agent_api.rs`, `src/openapi.json`: the read-only API and its spec.
 - `src/main.rs`: HTTP server, startup login, sync loop, exports.
 - `web/`: frontend.
 - `nix/package.nix`, `nix/module.nix`, `flake.nix`: package, NixOS module, dev shell.

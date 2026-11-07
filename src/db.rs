@@ -72,6 +72,25 @@ pub struct SyncStats {
     pub diets: usize,
 }
 
+/// One archived meal (delivery item), as stored by the last sync that saw it.
+#[derive(Clone, Debug)]
+pub struct ArchivedMeal {
+    pub date: String,
+    pub meal_key: Option<String>,
+    pub meal_name: Option<String>,
+    pub position: Option<i64>,
+    pub product_id: Option<u64>,
+    pub user_selected: bool,
+    pub status: Option<String>,
+    pub price: Option<f64>,
+    pub rating: Option<i64>,
+    pub rating_comment: Option<String>,
+    pub alternative_ids: Vec<u64>,
+    pub delivery_diet_id: Option<u64>,
+    /// The raw delivery (date, deadlines, address) this meal belongs to.
+    pub delivery: Value,
+}
+
 /// What we know about the user's past with one dish (matched across calorie sizes).
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct DishHistory {
@@ -283,6 +302,72 @@ impl Db {
         Ok(json!({ "meals": meals, "diets": diets, "orders": orders, "selections": selections, "archived_since": first_archived }))
     }
 
+    /// Archived meals (cancelled ones included) with `from <= date <= to`, by date and meal order.
+    pub fn meals_between(&self, from: &str, to: &str) -> Result<Vec<ArchivedMeal>> {
+        let conn = self.0.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT date, meal_key, meal_name, position, product_id, user_selected, status, price, rating,
+                    rating_comment, alternative_ids, delivery_diet_id, delivery_json
+             FROM meals WHERE date BETWEEN ?1 AND ?2 ORDER BY date, position, item_id",
+        )?;
+        let rows = stmt.query_map([from, to], |r| {
+            let alternatives: Option<String> = r.get(10)?;
+            let delivery: String = r.get(12)?;
+            Ok(ArchivedMeal {
+                date: r.get(0)?,
+                meal_key: r.get(1)?,
+                meal_name: r.get(2)?,
+                position: r.get(3)?,
+                product_id: r.get(4)?,
+                user_selected: r.get(5)?,
+                status: r.get(6)?,
+                price: r.get(7)?,
+                rating: r.get(8)?,
+                rating_comment: r.get(9)?,
+                alternative_ids: alternatives
+                    .and_then(|a| serde_json::from_str::<Vec<u64>>(&a).ok())
+                    .unwrap_or_default(),
+                delivery_diet_id: r.get(11)?,
+                delivery: serde_json::from_str(&delivery).unwrap_or(Value::Null),
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Archived dishes (raw NTFY products) by id; unknown ids are left out.
+    pub fn products(&self, ids: &[u64]) -> Result<HashMap<u64, Value>> {
+        let conn = self.0.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT json FROM products WHERE id = ?1")?;
+        let mut found = HashMap::new();
+        for &id in ids {
+            let json: Option<String> = stmt.query_row([id], |r| r.get(0)).optional()?;
+            if let Some(product) = json.and_then(|j| serde_json::from_str::<Value>(&j).ok()) {
+                found.insert(id, product);
+            }
+        }
+        Ok(found)
+    }
+
+    /// Range and freshness of the archive.
+    pub fn status(&self) -> Result<Value> {
+        let conn = self.0.lock().unwrap();
+        let (first, last, meals, synced): (Option<String>, Option<String>, u64, Option<String>) = conn.query_row(
+            "SELECT MIN(date), MAX(date), COUNT(*), MAX(last_seen) FROM meals",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?;
+        let dishes: u64 = conn.query_row("SELECT COUNT(*) FROM products", [], |r| r.get(0))?;
+        Ok(json!({ "first_day": first, "last_day": last, "meals": meals, "dishes": dishes, "last_sync": synced }))
+    }
+
+    pub fn orders(&self) -> Result<Vec<Value>> {
+        Self::json_rows(&self.0.lock().unwrap(), "SELECT json FROM orders ORDER BY id DESC")
+    }
+
+    pub fn diets(&self) -> Result<Vec<Value>> {
+        Self::json_rows(&self.0.lock().unwrap(), "SELECT json FROM diets ORDER BY id")
+    }
+
     /// Complete dump of the archive, raw API JSON included.
     pub fn export(&self) -> Result<Value> {
         let conn = self.0.lock().unwrap();
@@ -364,6 +449,22 @@ mod tests {
         assert_eq!(db.owner().unwrap(), None);
         db.store_diets(&[json!({"id": 1, "user_id": 4242, "user_diet_name": "X", "kcal": 1750})]).unwrap();
         assert_eq!(db.owner().unwrap(), Some(4242));
+    }
+
+    #[test]
+    fn reads_meals_and_products_back() {
+        let db = Db::memory().unwrap();
+        db.store_deliveries(&deliveries()).unwrap();
+        let meals = db.meals_between("2026-11-01", "2026-11-03").unwrap();
+        assert_eq!(meals.len(), 1);
+        assert_eq!(meals[0].meal_key.as_deref(), Some("BREAKFAST"));
+        assert_eq!(meals[0].alternative_ids, [100, 101]);
+        assert_eq!(meals[0].delivery["status"], "REALIZED");
+        assert!(db.meals_between("2026-11-03", "2026-11-09").unwrap().is_empty());
+        let products = db.products(&[100, 999]).unwrap();
+        assert_eq!(products.len(), 1);
+        assert_eq!(products[&100]["name"], "Owsianka");
+        assert_eq!(db.status().unwrap()["meals"], 1);
     }
 
     #[test]

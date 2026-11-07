@@ -262,7 +262,7 @@ pub fn attach_history(days: &mut [Day], history: &HashMap<u64, crate::db::DishHi
 }
 
 /// The API uses "YYYY-MM-DD HH:MM:SS" (Polish local time) or RFC 3339.
-fn parse_api_time(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+pub(crate) fn parse_api_time(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
     chrono::DateTime::parse_from_rfc3339(s).ok().or_else(|| {
         let naive = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok()?;
         naive.and_local_timezone(warsaw_offset(naive)).single()

@@ -1,0 +1,926 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ntfy-dashboard API",
+    "version": "1.0.0",
+    "description": "Read-only API over Yauhen's meals from the Nice To Fit You (NTFY, ntfy.pl) catering: what was delivered in the past and what is planned for upcoming days, with full nutrition, ingredients, allergens, prices, ratings, diets and orders.\n\nAll data comes from the dashboard's local archive, which syncs with NTFY every hour (see `archive.last_sync` in `/api/v1/status`; `POST /api/sync` forces a sync). NTFY itself forgets deliveries about 3 days after they happen, so older days exist only here.\n\nConventions: dates are `YYYY-MM-DD` in Polish local time (Europe/Warsaw); timestamps are RFC 3339 with offset. Weights are grams (`_g`), energy kcal, prices Polish złoty (`_pln`). Dish and meal names are in Polish. Each day normally has 5 meals (Śniadanie = breakfast, Obiad = lunch, Podwieczorek = afternoon snack, Kolacja = dinner, Przekąska = snack). Deliveries only happen on some weekdays, so days without a delivery are simply absent. No authentication.",
+    "license": {
+      "name": "MIT",
+      "url": "https://github.com/OmoYauhen/ntfy-dashboard/blob/main/LICENSE"
+    }
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "paths": {
+    "/api": {
+      "get": {
+        "operationId": "getOpenApiSpec",
+        "summary": "This OpenAPI document",
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.1 document",
+            "content": {
+              "application/json": {}
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/status": {
+      "get": {
+        "operationId": "getStatus",
+        "summary": "Connection to NTFY, today's date and the archive's range and freshness",
+        "description": "Call this first to learn `today` and which dates have data.",
+        "responses": {
+          "200": {
+            "description": "Status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/days": {
+      "get": {
+        "operationId": "listDays",
+        "summary": "Meals per delivery day in a date range (past and future)",
+        "description": "Returns every delivery day between `from` and `to` (inclusive) with its meals, the dish of each meal and daily totals. Defaults to the last 7 days through the next 14 days. Use `alternatives=true` to also list the dishes that could be chosen instead for each meal (larger response).",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "First date (default: today minus 7 days)."
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Last date (default: today plus 14 days). At most 400 days after `from`."
+          },
+          {
+            "name": "alternatives",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            },
+            "description": "Include the selectable alternative dishes for each meal."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Days in the range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "from": {
+                      "type": "string",
+                      "format": "date"
+                    },
+                    "to": {
+                      "type": "string",
+                      "format": "date"
+                    },
+                    "days": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Day"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/days/{date}": {
+      "get": {
+        "operationId": "getDay",
+        "summary": "One delivery day, including the alternative dishes for each meal",
+        "parameters": [
+          {
+            "name": "date",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "example": "2026-11-12"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The day",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Day"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/dishes/{id}": {
+      "get": {
+        "operationId": "getDish",
+        "summary": "Full details of a dish: ingredients, allergens, all nutrients, tags, and how often Yauhen ate it",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "`dish.id` from a day listing."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The dish",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DishDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/stats": {
+      "get": {
+        "operationId": "getStats",
+        "summary": "Diet statistics over a date range: daily averages, totals, most eaten dishes",
+        "description": "Defaults to everything archived up to today. Pass a future `to` to include planned days.",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "First date (default: first archived day)."
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Last date (default: today)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Statistics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Stats"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/orders": {
+      "get": {
+        "operationId": "listOrders",
+        "summary": "Diet subscriptions and all orders with prices",
+        "responses": {
+          "200": {
+            "description": "Diets and orders",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Orders"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sync": {
+      "post": {
+        "operationId": "syncNow",
+        "summary": "Sync the archive with NTFY now (takes a few seconds)",
+        "responses": {
+          "200": {
+            "description": "Counts of what the sync saw",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "meals": {
+                      "type": "integer"
+                    },
+                    "products": {
+                      "type": "integer"
+                    },
+                    "orders": {
+                      "type": "integer"
+                    },
+                    "diets": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "responses": {
+      "Error": {
+        "description": "Error. 400: bad parameter; 404: nothing there; 502: NTFY failed; 503: not connected to NTFY yet.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "error"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Status": {
+        "type": "object",
+        "properties": {
+          "connected_to_ntfy": {
+            "type": "boolean"
+          },
+          "account": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "first_name": {
+                "type": "string"
+              },
+              "user_id": {
+                "type": "integer"
+              }
+            }
+          },
+          "login_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the dashboard isn't connected, if it isn't."
+          },
+          "today": {
+            "type": "string",
+            "format": "date"
+          },
+          "archive": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "first_day": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date"
+              },
+              "last_day": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date",
+                "description": "Last planned delivery day known."
+              },
+              "meals": {
+                "type": "integer"
+              },
+              "dishes": {
+                "type": "integer",
+                "description": "Distinct dishes stored (eaten, planned and alternatives)."
+              },
+              "last_sync": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Local time of the last sync, `YYYY-MM-DD HH:MM:SS`."
+              }
+            }
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "connected_to_ntfy",
+          "account",
+          "login_error",
+          "today",
+          "archive"
+        ]
+      },
+      "Day": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "weekday": {
+            "type": "string",
+            "example": "Thu"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "planned",
+              "delivered",
+              "past",
+              "cancelled"
+            ],
+            "description": "`planned`: upcoming. `delivered`: NTFY confirmed delivery. `past`: the date has passed but the archive never saw NTFY's confirmation (it left NTFY's 3-day window first); almost certainly delivered. `cancelled`: every meal cancelled."
+          },
+          "menu_published": {
+            "type": "boolean",
+            "description": "False for days far ahead whose menu NTFY hasn't published yet; their meals have `dish: null`."
+          },
+          "menu_published_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "can_change": {
+            "type": "boolean",
+            "description": "Whether dishes for this day can still be changed."
+          },
+          "can_change_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Deadline for changing this day's dishes."
+          },
+          "totals": {
+            "$ref": "#/components/schemas/Totals"
+          },
+          "meals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Meal"
+            }
+          }
+        },
+        "required": [
+          "date",
+          "weekday",
+          "status",
+          "menu_published",
+          "can_change",
+          "can_change_until",
+          "totals",
+          "meals"
+        ]
+      },
+      "Totals": {
+        "type": "object",
+        "description": "Sum over the day's meals that have a dish (cancelled meals excluded).",
+        "properties": {
+          "kcal": {
+            "type": "number"
+          },
+          "protein_g": {
+            "type": "number"
+          },
+          "carb_g": {
+            "type": "number"
+          },
+          "fat_g": {
+            "type": "number"
+          },
+          "fiber_g": {
+            "type": "number"
+          },
+          "sugar_g": {
+            "type": "number"
+          },
+          "salt_g": {
+            "type": "number"
+          },
+          "price_pln": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "kcal",
+          "protein_g",
+          "carb_g",
+          "fat_g",
+          "fiber_g",
+          "sugar_g",
+          "salt_g",
+          "price_pln"
+        ]
+      },
+      "Meal": {
+        "type": "object",
+        "properties": {
+          "meal": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Meal name in Polish, e.g. Śniadanie.",
+            "example": "Obiad"
+          },
+          "meal_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Stable meal key.",
+            "example": "LUNCH"
+          },
+          "position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Order within the day (1 = first)."
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "NTFY item status: TO-BE-REALIZED, REALIZED, CANCELED or NOT-DELIVERED."
+          },
+          "chosen_by_user": {
+            "type": "boolean",
+            "description": "True if Yauhen picked this dish; false if it's the caterer's default."
+          },
+          "diet_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "The diet subscription this meal belongs to (`diets[].id` in `/api/v1/orders`)."
+          },
+          "dish": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Dish"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "price_pln": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "your_rating": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Yauhen's rating (1-5) in the NTFY app, if given."
+          },
+          "your_comment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "alternatives": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Dish"
+            },
+            "description": "Only with `alternatives=true` or on `/api/v1/days/{date}`: dishes selectable for this meal (includes the current one)."
+          }
+        },
+        "required": [
+          "meal",
+          "meal_key",
+          "position",
+          "status",
+          "chosen_by_user",
+          "diet_id",
+          "dish",
+          "price_pln",
+          "your_rating",
+          "your_comment"
+        ]
+      },
+      "Dish": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string",
+            "description": "Polish name."
+          },
+          "kcal": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "protein_g": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "carb_g": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "fat_g": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "fiber_g": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "sugar_g": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "salt_g": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "weight_g": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "allergens": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Polish allergen names, e.g. Mleko (milk), Gluten, Jaja (eggs)."
+          },
+          "ntfy_rating": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Average rating of all NTFY customers (1-5)."
+          },
+          "image_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kcal",
+          "protein_g",
+          "carb_g",
+          "fat_g",
+          "fiber_g",
+          "sugar_g",
+          "salt_g",
+          "weight_g",
+          "allergens",
+          "ntfy_rating",
+          "image_url"
+        ]
+      },
+      "DishDetails": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Dish"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kj": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "saturated_fat_g": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "ntfy_ratings_count": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "composition": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Full ingredient list (Polish), allergens in capitals."
+              },
+              "may_contain": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Cross-contamination warning."
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "NTFY's internal tags (diet lines, dish families)."
+              },
+              "categories": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "same_dish_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Shared by the same dish in other calorie sizes."
+              },
+              "your_history": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "description": "Past days (any calorie size) on which Yauhen got this dish.",
+                "properties": {
+                  "times_eaten": {
+                    "type": "integer"
+                  },
+                  "last_eaten": {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  "your_avg_rating": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "Stats": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date"
+          },
+          "to": {
+            "type": "string",
+            "format": "date"
+          },
+          "days": {
+            "type": "integer"
+          },
+          "meals": {
+            "type": "integer"
+          },
+          "meals_chosen_by_user": {
+            "type": "integer"
+          },
+          "average_per_day": {
+            "$ref": "#/components/schemas/Totals"
+          },
+          "total_price_pln": {
+            "type": "number"
+          },
+          "your_average_rating": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "most_eaten": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "times": {
+                  "type": "integer"
+                },
+                "your_avg_rating": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "days",
+          "meals",
+          "meals_chosen_by_user",
+          "average_per_day",
+          "total_price_pln",
+          "your_average_rating",
+          "most_eaten"
+        ]
+      },
+      "Orders": {
+        "type": "object",
+        "properties": {
+          "diets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Name Yauhen gave the diet."
+                },
+                "kcal": {
+                  "type": "number",
+                  "description": "Daily calorie target."
+                },
+                "status": {
+                  "type": "string"
+                },
+                "first_day": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "last_day": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "days": {
+                  "type": "integer"
+                },
+                "delivered_days": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "orders": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "placed_at": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "first_delivery": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "last_delivery": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "delivery_days": {
+                  "type": "integer"
+                },
+                "meals_price_pln": {
+                  "type": "number"
+                },
+                "delivery_price_pln": {
+                  "type": "number"
+                },
+                "discount_pln": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "total_pln": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "diets",
+          "orders"
+        ]
+      }
+    }
+  }
+}

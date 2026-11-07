@@ -1,3 +1,4 @@
+mod agent_api;
 mod db;
 mod images;
 mod model;
@@ -71,6 +72,12 @@ impl AppError {
     }
 }
 
+impl std::fmt::Debug for AppError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {:#}", self.status, self.error)
+    }
+}
+
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         eprintln!("error: {:#}", self.error);
@@ -119,6 +126,14 @@ async fn main() -> Result<()> {
         .route("/app.js", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../web/app.js")) }))
         .route("/history.js", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../web/history.js")) }))
         .route("/style.css", get(|| async { ([(header::CONTENT_TYPE, "text/css")], include_str!("../web/style.css")) }))
+        // Read-only API for assistants; its OpenAPI spec is served at /api.
+        .route("/api", get(agent_api::spec))
+        .route("/api/v1/status", get(agent_api::status))
+        .route("/api/v1/days", get(agent_api::days))
+        .route("/api/v1/days/{date}", get(agent_api::day))
+        .route("/api/v1/dishes/{id}", get(agent_api::dish))
+        .route("/api/v1/stats", get(agent_api::stats))
+        .route("/api/v1/orders", get(agent_api::orders))
         .route("/api/session", get(session))
         .route("/api/days", get(days))
         .route("/api/history", get(history))
