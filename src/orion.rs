@@ -81,10 +81,18 @@ struct SessionData {
 
 impl Client {
     pub fn new() -> Result<Self> {
-        let http = reqwest::Client::builder()
-            .user_agent("ntfy-dashboard")
-            .timeout(std::time::Duration::from_secs(45))
-            .build()?;
+        Self::with(reqwest::Client::builder())
+    }
+
+    /// A client that never talks to the network: no CA certificates are loaded, so it also works
+    /// in build sandboxes that have none.
+    #[cfg(test)]
+    pub fn offline() -> Self {
+        Self::with(reqwest::Client::builder().tls_certs_only([])).unwrap()
+    }
+
+    fn with(builder: reqwest::ClientBuilder) -> Result<Self> {
+        let http = builder.user_agent("ntfy-dashboard").timeout(std::time::Duration::from_secs(45)).build()?;
         Ok(Self { http, creds: std::sync::Mutex::new(None), session: Mutex::new(None) })
     }
 

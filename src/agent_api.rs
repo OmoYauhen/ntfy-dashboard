@@ -389,7 +389,7 @@ mod tests {
             }
         })).unwrap();
         Arc::new(crate::AppState {
-            client: crate::orion::Client::new().unwrap(),
+            client: crate::orion::Client::offline(),
             demo: false,
             read_only: false,
             demo_days: tokio::sync::Mutex::new(None),
@@ -459,7 +459,7 @@ mod real_archive {
         let out = std::path::PathBuf::from(std::env::var("NTFY_TEST_OUT").unwrap());
         std::fs::create_dir_all(&out).unwrap();
         let state: Shared = Arc::new(crate::AppState {
-            client: crate::orion::Client::new().unwrap(),
+            client: crate::orion::Client::offline(),
             demo: false,
             read_only: false,
             demo_days: tokio::sync::Mutex::new(None),
