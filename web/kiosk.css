@@ -73,15 +73,27 @@ main { min-height: 0; padding: .6rem 3rem 0; position: relative; }
 
 /* Today: one card per meal, photo on top, text on white */
 .today { display: flex; flex-direction: column; height: 100%; }
-.meal-row { flex: 1; min-height: 0; display: flex; gap: 1.2rem; padding-bottom: 1.4rem; }
+/* Main meals as equal columns; the smaller meals stacked in a narrower column, set a bit apart. */
+.meal-grid {
+  flex: 1; min-height: 0; padding-bottom: 1.4rem;
+  display: grid; grid-template-columns: repeat(var(--main, 3), minmax(0, 1fr)) minmax(0, .78fr); gap: 1.2rem;
+}
+.meal-grid.no-side { grid-template-columns: repeat(var(--main, 3), minmax(0, 1fr)); }
+.side-meals {
+  display: grid; grid-auto-rows: minmax(0, 1fr); gap: 1.2rem; min-height: 0;
+  margin-left: 1.6rem; padding-left: 1.6rem; border-left: 1px solid var(--line);
+}
+.side-meals .meal-card .info { padding: .8rem 1.1rem 1rem; gap: .35rem; }
+.side-meals .meal-card .dish-name { font-size: 1.2rem; -webkit-line-clamp: 2; min-height: 2.45em; }
+.side-meals .meal-card.next .dish-name { font-size: 1.3rem; }
 .meal-card {
-  position: relative; flex: 1 1 0; min-width: 0; display: flex; flex-direction: column;
+  position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column;
   border-radius: var(--radius); overflow: hidden; background: var(--panel); box-shadow: var(--shadow);
   border: .18rem solid transparent; text-align: left;
-  transition: flex-grow .6s cubic-bezier(.2,.8,.2,1), opacity .4s, transform .15s;
+  transition: opacity .4s, transform .15s, box-shadow .3s;
 }
 .meal-card:active { transform: scale(.985); }
-.meal-card.next { flex-grow: 1.45; border-color: var(--gold-fill); box-shadow: 0 .8rem 2.2rem rgb(150 100 30 / .22); }
+.meal-card.next { border-color: var(--gold-fill); box-shadow: 0 .9rem 2.4rem rgb(150 100 30 / .25); transform: translateY(-.3rem); }
 .meal-card.done { opacity: .55; }
 .meal-card .photo { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; background: var(--panel-soft); }
 .meal-card .photo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
@@ -98,7 +110,6 @@ main { min-height: 0; padding: .6rem 3rem 0; position: relative; }
   font-family: var(--serif); font-size: 1.45rem; font-weight: 600; line-height: 1.22; margin: 0;
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; min-height: 3.6em;
 }
-.meal-card.next .dish-name { font-size: 1.8rem; }
 .chips { display: flex; flex-wrap: wrap; gap: .45rem; }
 .chip { padding: .3rem .7rem; border-radius: 1rem; background: var(--panel-soft); color: var(--muted); font-size: .9rem; font-weight: 600; white-space: nowrap; }
 .chip.kcal { background: var(--gold-soft); color: var(--gold); }

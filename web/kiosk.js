@@ -14,6 +14,9 @@ const STALE_SYNC_MS = 2 * 3600 * 1000;
 /// Usual start of each meal (hours); the card stays "up next" until 90 min after it starts.
 const MEAL_HOURS = { BREAKFAST: 6.5, "SECOND-BREAKFAST": 10, LUNCH: 13, TEA: 16, DINNER: 18.5 };
 const MEAL_WINDOW_H = 1.5;
+/// Today's layout: these meals get the three big columns; the others (second breakfast or
+/// afternoon snack on top, snack below) share a narrower fourth column.
+const MAIN_MEALS = ["BREAKFAST", "LUNCH", "DINNER"];
 /// One-tap comment phrases. Comments go to the caterer, so they're in Polish.
 const QUICK_COMMENTS = [
   ["Pyszne!", "Delicious"], ["Idealna porcja", "Perfect portion"], ["Za mała porcja", "Too small"],
@@ -162,8 +165,19 @@ function renderToday() {
   return el("div", { class: "today" },
     title(heading, sub ? el("span", { class: "sub" }, sub) : null,
       day.can_rate ? el("span", { class: "pill gold" }, "★ Tap a meal to rate it") : null),
-    el("div", { class: "meal-row" }, day.meals.map((m, i) => mealCard(day, m, i === next, done[i]))),
+    mealGrid(day, next, done),
   );
+}
+
+/// Breakfast, lunch and dinner as three main columns; the smaller meals stacked in a fourth.
+function mealGrid(day, next, done) {
+  const cards = day.meals.map((m, i) => ({ meal: m, card: mealCard(day, m, i === next, done[i]) }));
+  let main = cards.filter((c) => MAIN_MEALS.includes(c.meal.meal_key));
+  let side = cards.filter((c) => !MAIN_MEALS.includes(c.meal.meal_key));
+  if (!main.length) [main, side] = [cards.slice(0, 3), cards.slice(3)];
+  return el("div", { class: `meal-grid${side.length ? "" : " no-side"}`, style: `--main:${main.length}` },
+    main.map((c) => c.card),
+    side.length ? el("div", { class: "side-meals" }, side.map((c) => c.card)) : null);
 }
 
 function mealCard(day, meal, isNext, isDone) {
