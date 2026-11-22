@@ -14,6 +14,9 @@ const STALE_SYNC_MS = 2 * 3600 * 1000;
 /// Usual start of each meal (hours); the card stays "up next" until 90 min after it starts.
 const MEAL_HOURS = { BREAKFAST: 6.5, "SECOND-BREAKFAST": 10, LUNCH: 13, TEA: 16, DINNER: 18.5 };
 const MEAL_WINDOW_H = 1.5;
+/// Today's layout: these meals get the three big columns; the others (second breakfast or
+/// afternoon snack on top, snack below) share a narrower fourth column.
+const MAIN_MEALS = ["BREAKFAST", "LUNCH", "DINNER"];
 /// One-tap comment phrases. Comments go to the caterer, so they're in Polish.
 const QUICK_COMMENTS = [
   ["Pyszne!", "Delicious"], ["Idealna porcja", "Perfect portion"], ["Za mała porcja", "Too small"],
@@ -134,23 +137,6 @@ function renderSync() {
   box.className = `sync${age > STALE_SYNC_MS ? " stale" : ""}`;
 }
 
-let ambientUrl = null;
-function setAmbient(url) {
-  if (!url || url === ambientUrl) return;
-  ambientUrl = url;
-  const box = $("ambient");
-  const img = new Image();
-  img.onload = () => {
-    box.append(img);
-    requestAnimationFrame(() => img.classList.add("on"));
-    [...box.querySelectorAll("img")].slice(0, -1).forEach((old) => {
-      old.classList.remove("on");
-      setTimeout(() => old.remove(), 3000);
-    });
-  };
-  img.src = url;
-}
-
 function rateBadge() {
   const pending = state.days
     .filter((d) => d.can_rate)
@@ -174,14 +160,24 @@ function renderToday() {
   }
   const { next, done } = mealTiming(day);
   const isToday = day.date === today();
-  setAmbient(day.meals[Math.max(next, 0)]?.dish?.image_url);
   const heading = isToday ? "Today's menu" : `Next delivery · ${fmtDate(day.date, { weekday: "long", day: "numeric", month: "long" })}`;
   const sub = isToday && next === -1 ? "All meals done. Enjoy your evening" : null;
   return el("div", { class: "today" },
     title(heading, sub ? el("span", { class: "sub" }, sub) : null,
       day.can_rate ? el("span", { class: "pill gold" }, "★ Tap a meal to rate it") : null),
-    el("div", { class: "meal-row" }, day.meals.map((m, i) => mealCard(day, m, i === next, done[i]))),
+    mealGrid(day, next, done),
   );
+}
+
+/// Breakfast, lunch and dinner as three main columns; the smaller meals stacked in a fourth.
+function mealGrid(day, next, done) {
+  const cards = day.meals.map((m, i) => ({ meal: m, card: mealCard(day, m, i === next, done[i]) }));
+  let main = cards.filter((c) => MAIN_MEALS.includes(c.meal.meal_key));
+  let side = cards.filter((c) => !MAIN_MEALS.includes(c.meal.meal_key));
+  if (!main.length) [main, side] = [cards.slice(0, 3), cards.slice(3)];
+  return el("div", { class: `meal-grid${side.length ? "" : " no-side"}`, style: `--main:${main.length}` },
+    main.map((c) => c.card),
+    side.length ? el("div", { class: "side-meals" }, side.map((c) => c.card)) : null);
 }
 
 function mealCard(day, meal, isNext, isDone) {
@@ -190,19 +186,18 @@ function mealCard(day, meal, isNext, isDone) {
     class: `meal-card${isNext ? " next" : ""}${isDone ? " done" : ""}`,
     onclick: () => d && openDish(day, meal),
   },
-    d ? el("img", { src: d.image_url, alt: "" }) : el("div", { class: "no-dish" }, "Menu not published yet"),
-    el("div", { class: "shade" }),
-    el("div", { class: "top" },
-      el("span", { class: "meal-name" }, meal.meal || meal.meal_key),
+    el("div", { class: "photo" },
+      d ? el("img", { src: d.image_url, alt: "" }) : el("div", { class: "no-dish" }, "Menu not published yet"),
       isNext ? el("span", { class: "badge-next" }, day.date === today() ? "UP NEXT" : "FIRST") : null),
-    d ? el("div", { class: "bottom" },
-      el("p", { class: "dish-name" }, d.name),
-      el("div", { class: "chips" },
+    el("div", { class: "info" },
+      el("span", { class: "meal-name" }, meal.meal || meal.meal_key),
+      d ? el("p", { class: "dish-name" }, d.name) : null,
+      d ? el("div", { class: "chips" },
         el("span", { class: "chip kcal" }, `${num(d.kcal)} kcal`),
         el("span", { class: "chip" }, `P ${num(d.protein_g)}`),
         el("span", { class: "chip" }, `C ${num(d.carb_g)}`),
         el("span", { class: "chip" }, `F ${num(d.fat_g)}`),
-        meal.your_rating ? el("span", { class: "chip mine" }, "★".repeat(meal.your_rating)) : null)) : null,
+        meal.your_rating ? el("span", { class: "chip mine" }, "★".repeat(meal.your_rating)) : null) : null),
   );
 }
 
@@ -351,7 +346,7 @@ async function openDish(day, meal, focusFeedback = false) {
 
   sheet.replaceChildren(el("div", { class: "sheet-card", onclick: (e) => e.stopPropagation() },
     el("button", { class: "close", "aria-label": "Close", onclick: closeSheet }, "×"),
-    el("div", { class: "sheet-photo" }, el("img", { src: d.image_url, alt: "" }), el("div", { class: "shade" })),
+    el("div", { class: "sheet-photo" }, el("img", { src: d.image_url, alt: "" })),
     body));
   sheet.onclick = closeSheet;
   sheet.hidden = false;

@@ -152,8 +152,10 @@ choices you made here. It syncs at startup, every hour, whenever the planner loa
 a 17" Android panel). It's dark, photo-led and touch-sized, scales to any 16:9 resolution, and never
 scrolls except in the rating list.
 
-- **Today**: the day's meals as large photo cards, with the next one (by time of day) highlighted. When
-  nothing is delivered today, it shows the next delivery instead. The top bar shows the clock, the day's
+- **Today**: breakfast, lunch and dinner as three large photo columns. The smaller meals (second
+  breakfast or afternoon snack, then the snack) are stacked in a narrower fourth column, set slightly
+  apart. The next meal by time of day gets a gold frame and "UP NEXT", and meals already past are faded.
+  When nothing is delivered today, it shows the next delivery instead. The top bar shows the clock, the day's
   kcal and macros, and when the archive last synced.
 - **Upcoming**: the next delivery days, a column each, flagging days whose choice locks within 48 hours.
 - **Rate**: recent delivered meals. One tap on a star rates a meal in NTFY. **＋ Comment** adds one-tap
