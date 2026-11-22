@@ -134,23 +134,6 @@ function renderSync() {
   box.className = `sync${age > STALE_SYNC_MS ? " stale" : ""}`;
 }
 
-let ambientUrl = null;
-function setAmbient(url) {
-  if (!url || url === ambientUrl) return;
-  ambientUrl = url;
-  const box = $("ambient");
-  const img = new Image();
-  img.onload = () => {
-    box.append(img);
-    requestAnimationFrame(() => img.classList.add("on"));
-    [...box.querySelectorAll("img")].slice(0, -1).forEach((old) => {
-      old.classList.remove("on");
-      setTimeout(() => old.remove(), 3000);
-    });
-  };
-  img.src = url;
-}
-
 function rateBadge() {
   const pending = state.days
     .filter((d) => d.can_rate)
@@ -174,7 +157,6 @@ function renderToday() {
   }
   const { next, done } = mealTiming(day);
   const isToday = day.date === today();
-  setAmbient(day.meals[Math.max(next, 0)]?.dish?.image_url);
   const heading = isToday ? "Today's menu" : `Next delivery · ${fmtDate(day.date, { weekday: "long", day: "numeric", month: "long" })}`;
   const sub = isToday && next === -1 ? "All meals done. Enjoy your evening" : null;
   return el("div", { class: "today" },
@@ -190,19 +172,18 @@ function mealCard(day, meal, isNext, isDone) {
     class: `meal-card${isNext ? " next" : ""}${isDone ? " done" : ""}`,
     onclick: () => d && openDish(day, meal),
   },
-    d ? el("img", { src: d.image_url, alt: "" }) : el("div", { class: "no-dish" }, "Menu not published yet"),
-    el("div", { class: "shade" }),
-    el("div", { class: "top" },
-      el("span", { class: "meal-name" }, meal.meal || meal.meal_key),
+    el("div", { class: "photo" },
+      d ? el("img", { src: d.image_url, alt: "" }) : el("div", { class: "no-dish" }, "Menu not published yet"),
       isNext ? el("span", { class: "badge-next" }, day.date === today() ? "UP NEXT" : "FIRST") : null),
-    d ? el("div", { class: "bottom" },
-      el("p", { class: "dish-name" }, d.name),
-      el("div", { class: "chips" },
+    el("div", { class: "info" },
+      el("span", { class: "meal-name" }, meal.meal || meal.meal_key),
+      d ? el("p", { class: "dish-name" }, d.name) : null,
+      d ? el("div", { class: "chips" },
         el("span", { class: "chip kcal" }, `${num(d.kcal)} kcal`),
         el("span", { class: "chip" }, `P ${num(d.protein_g)}`),
         el("span", { class: "chip" }, `C ${num(d.carb_g)}`),
         el("span", { class: "chip" }, `F ${num(d.fat_g)}`),
-        meal.your_rating ? el("span", { class: "chip mine" }, "★".repeat(meal.your_rating)) : null)) : null,
+        meal.your_rating ? el("span", { class: "chip mine" }, "★".repeat(meal.your_rating)) : null) : null),
   );
 }
 
@@ -351,7 +332,7 @@ async function openDish(day, meal, focusFeedback = false) {
 
   sheet.replaceChildren(el("div", { class: "sheet-card", onclick: (e) => e.stopPropagation() },
     el("button", { class: "close", "aria-label": "Close", onclick: closeSheet }, "×"),
-    el("div", { class: "sheet-photo" }, el("img", { src: d.image_url, alt: "" }), el("div", { class: "shade" })),
+    el("div", { class: "sheet-photo" }, el("img", { src: d.image_url, alt: "" })),
     body));
   sheet.onclick = closeSheet;
   sheet.hidden = false;
