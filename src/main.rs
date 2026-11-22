@@ -141,6 +141,10 @@ async fn main() -> Result<()> {
         .route("/api/export.json", get(export_json))
         .route("/api/export.csv", get(export_csv))
         .route("/api/select", post(select))
+        .route("/api/rate", post(rate))
+        .route("/dashboard", get(|| async { Html(include_str!("../web/kiosk.html")) }))
+        .route("/kiosk.js", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../web/kiosk.js")) }))
+        .route("/kiosk.css", get(|| async { ([(header::CONTENT_TYPE, "text/css")], include_str!("../web/kiosk.css")) }))
         .route("/img/{id}", get(image))
         .with_state(state);
 
@@ -311,6 +315,38 @@ async fn select(State(state): State<Shared>, Json(req): Json<SelectRequest>) -> 
     state.client.change_item(req.delivery_id, req.item_id, req.product_id).await?;
     archive(&state)?.record_selection(req.item_id, req.from_product_id, req.product_id)?;
     Ok(Json(json!({ "ok": true })))
+}
+
+/// Longest comment sent with a rating.
+const MAX_COMMENT_CHARS: usize = 500;
+
+#[derive(Deserialize)]
+struct RateRequest {
+    item_id: u64,
+    rating: u8,
+    comment: Option<String>,
+}
+
+/// Rates a delivered meal in NTFY (1-5 stars, optional comment) and records it in the archive.
+async fn rate(State(state): State<Shared>, Json(req): Json<RateRequest>) -> Result<Json<serde_json::Value>, AppError> {
+    if !(1..=5).contains(&req.rating) {
+        return Err(AppError::new(StatusCode::BAD_REQUEST, "rating must be 1 to 5"));
+    }
+    let comment = req.comment.as_deref().map(str::trim).filter(|c| !c.is_empty());
+    if comment.is_some_and(|c| c.chars().count() > MAX_COMMENT_CHARS) {
+        return Err(AppError::new(StatusCode::BAD_REQUEST, &format!("comment is limited to {MAX_COMMENT_CHARS} characters")));
+    }
+    if state.read_only {
+        return Err(AppError::new(StatusCode::FORBIDDEN, "read-only mode: ratings are not sent to NTFY"));
+    }
+    let db = archive(&state)?;
+    let delivery_id = db
+        .delivery_of(req.item_id)?
+        .ok_or_else(|| AppError::new(StatusCode::NOT_FOUND, &format!("no meal {} in the archive", req.item_id)))?;
+    state.client.rate_item(delivery_id, req.item_id, req.rating, comment).await?;
+    db.record_rating(req.item_id, req.rating, comment)?;
+    println!("rated meal {} with {} stars", req.item_id, req.rating);
+    Ok(Json(json!({ "ok": true, "rating": req.rating, "comment": comment })))
 }
 
 fn today() -> String {

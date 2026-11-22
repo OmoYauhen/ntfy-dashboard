@@ -73,3 +73,14 @@ returned `simple_product_id` equals the requested one, so a body the API ignores
   order, and expansions are rejected.
 - `GET users/{uid}/delivery-diets` returns the diet subscriptions (`user_diet_name`, `kcal`, `delivery_days`).
 - `GET diet-menu/{date}` still works for past dates, but it's the public menu, not what you got.
+
+## Rating a meal (inferred, unconfirmed)
+
+The web panel only shows ratings (`rating_value`, and the delivery's `rate_from`/`rate_to` window); rating
+itself happens in the mobile app ("Oceń posiłki": stars plus an optional "Podziel się opinią" comment).
+Unauthenticated probes (2026-11-22) found no rating-specific route: `…/items/{iid}/rating(s)`,
+`…/deliveries/{did}/rating(s)`, `users/{uid}/ratings`, and `users/{uid}/product-ratings` all return
+"No route found". The only item-level write route is `PATCH users/{uid}/deliveries/{did}/items/{iid}`,
+whose response includes `rating_value` and `rating_comment`. So the dashboard sends
+`{"rating_value": 1-5, "rating_comment": "…"|null}` there (`Client::rate_item`) and checks that the
+returned item has the new `rating_value`, so an ignored body shows up as an error.

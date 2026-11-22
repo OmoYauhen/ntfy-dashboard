@@ -145,11 +145,14 @@ fn day_json(date: NaiveDate, meals: &[&ArchivedMeal], products: &HashMap<u64, Va
     let delivery = &meals[0].delivery;
     let deadline = delivery["products_change_to"].as_str().and_then(crate::model::parse_api_time);
     let menu_from = delivery["show_menu_from"].as_str().and_then(crate::model::parse_api_time);
+    let rate_from = delivery["rate_from"].as_str().and_then(crate::model::parse_api_time);
+    let rate_to = delivery["rate_to"].as_str().and_then(crate::model::parse_api_time);
     let now = chrono::Utc::now().fixed_offset();
     let meal_list: Vec<Value> = meals
         .iter()
         .map(|m| {
             let mut meal = json!({
+                "id": m.item_id,
                 "meal": m.meal_name,
                 "meal_key": m.meal_key,
                 "position": m.position,
@@ -180,6 +183,8 @@ fn day_json(date: NaiveDate, meals: &[&ArchivedMeal], products: &HashMap<u64, Va
         "menu_published_at": menu_from.map(|d| d.to_rfc3339()),
         "can_change": deadline.is_some_and(|d| d > now),
         "can_change_until": deadline.map(|d| d.to_rfc3339()),
+        "can_rate": rate_from.is_some_and(|d| d <= now) && rate_to.is_some_and(|d| d > now),
+        "can_rate_until": rate_to.map(|d| d.to_rfc3339()),
         "totals": totals(meals, products),
         "meals": meal_list,
     })
@@ -369,7 +374,8 @@ mod tests {
         });
         db.store_deliveries(&json!({
             "results": [
-                {"id": 1, "date": "2020-01-02", "status": "REALIZED", "products_change_to": "2019-12-31 16:00:00"},
+                {"id": 1, "date": "2020-01-02", "status": "REALIZED", "products_change_to": "2019-12-31 16:00:00",
+                 "rate_from": "2020-01-02 00:00:00", "rate_to": "2999-01-01 00:00:00"},
                 {"id": 2, "date": "2999-01-05", "status": "TO-BE-REALIZED", "products_change_to": "2999-01-03 16:00:00"}
             ],
             "includes": {
@@ -412,6 +418,8 @@ mod tests {
         assert_eq!(past["date"], "2020-01-02");
         assert_eq!(past["status"], "delivered");
         assert_eq!(past["can_change"], false);
+        assert_eq!(past["can_rate"], true);
+        assert_eq!(past["meals"][0]["id"], 10);
         // The cancelled lunch doesn't count.
         assert_eq!(past["totals"]["kcal"], 350.0);
         assert_eq!(past["totals"]["price_pln"], 18.5);
@@ -425,6 +433,7 @@ mod tests {
         let future = &days[1];
         assert_eq!(future["status"], "planned");
         assert_eq!(future["can_change"], true);
+        assert_eq!(future["can_rate"], false);
         assert_eq!(future["can_change_until"], "2999-01-03T16:00:00+01:00");
         let names: Vec<&str> = future["meals"][0]["alternatives"].as_array().unwrap()
             .iter().map(|d| d["name"].as_str().unwrap()).collect();

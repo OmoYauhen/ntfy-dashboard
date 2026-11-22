@@ -146,6 +146,23 @@ choices you made here. It syncs at startup, every hour, whenever the planner loa
 `/history` shows per-day totals, averages, your most-eaten dishes and your orders.
 `/api/export.csv` gives one row per meal with every nutrient; `/api/export.json` dumps the whole archive.
 
+## Kitchen screen
+
+`/dashboard` is a kiosk page for a landscape touch screen that shows it fullscreen all day (built for
+a 17" Android panel). It's dark, photo-led and touch-sized, scales to any 16:9 resolution, and never
+scrolls except in the rating list.
+
+- **Today**: the day's meals as large photo cards, with the next one (by time of day) highlighted. When
+  nothing is delivered today, it shows the next delivery instead. The top bar shows the clock, the day's
+  kcal and macros, and when the archive last synced.
+- **Upcoming**: the next delivery days, a column each, flagging days whose choice locks within 48 hours.
+- **Rate**: recent delivered meals. One tap on a star rates a meal in NTFY. **＋ Comment** adds one-tap
+  Polish phrases (*Pyszne!*, *Za słone*, …) or free text. The tab badge counts meals still waiting for
+  a rating while NTFY's rating window is open.
+- Tapping any meal opens its photo, nutrition, allergens and ingredients.
+- It goes back to Today after 2 minutes without touch, reloads every 5 minutes, and dims from 22:00 to
+  6:00 (a touch wakes it).
+
 ## API for assistants
 
 A read-only JSON API with no auth, for a personal assistant agent or for scripts. `GET /api` returns
@@ -162,6 +179,9 @@ archive, so past days that NTFY no longer returns are included.
 | `GET /api/v1/orders` | diet subscriptions and orders with prices |
 | `POST /api/sync` | sync with NTFY now instead of waiting for the hourly sync |
 
+Rating meals goes through `POST /api/rate` (`{"item_id", "rating": 1-5, "comment"}`), which is
+used by the kitchen screen and is deliberately left out of the read-only `/api/v1`.
+
 ```sh
 curl -s http://ntfy.yauhen.io/api/v1/days/2026-11-12 | jq '.meals[] | {meal, dish: .dish.name, kcal: .dish.kcal}'
 ```
@@ -173,6 +193,7 @@ curl -s http://ntfy.yauhen.io/api/v1/days/2026-11-12 | jq '.meals[] | {meal, dis
 - `src/db.rs`: SQLite archive (history, dish stats, exports).
 - `src/images.rs`: photo disk cache and prefetching.
 - `src/agent_api.rs`, `src/openapi.json`: the read-only API and its spec.
+- `web/kiosk.*`: the kitchen screen at `/dashboard`.
 - `src/main.rs`: HTTP server, startup login, sync loop, exports.
 - `web/`: frontend.
 - `nix/package.nix`, `nix/module.nix`, `flake.nix`: package, NixOS module, dev shell.

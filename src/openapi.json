@@ -439,6 +439,18 @@
             "items": {
               "$ref": "#/components/schemas/Meal"
             }
+          },
+          "can_rate": {
+            "type": "boolean",
+            "description": "Whether this day's meals can be rated now (NTFY allows rating for a few days after delivery)."
+          },
+          "can_rate_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "End of the rating window."
           }
         },
         "required": [
@@ -449,7 +461,9 @@
           "can_change",
           "can_change_until",
           "totals",
-          "meals"
+          "meals",
+          "can_rate",
+          "can_rate_until"
         ]
       },
       "Totals": {
@@ -495,6 +509,10 @@
       "Meal": {
         "type": "object",
         "properties": {
+          "id": {
+            "type": "integer",
+            "description": "NTFY delivery item id of this meal."
+          },
           "meal": {
             "type": [
               "string",
@@ -574,6 +592,7 @@
           }
         },
         "required": [
+          "id",
           "meal",
           "meal_key",
           "position",

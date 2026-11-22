@@ -242,6 +242,25 @@ impl Client {
         Ok(item)
     }
 
+    /// Rates a delivered meal (1-5 stars, optional comment), as the app's "Oceń posiłki" does.
+    /// Only possible in the delivery's rating window. Returns the updated item; fails if the API
+    /// did not store the rating.
+    pub async fn rate_item(&self, delivery_id: u64, item_id: u64, rating: u8, comment: Option<&str>) -> Result<Value> {
+        let body = json!({ "rating_value": rating, "rating_comment": comment });
+        let value = self
+            .authed(
+                reqwest::Method::PATCH,
+                |uid| format!("users/{uid}/deliveries/{delivery_id}/items/{item_id}"),
+                |r| r.json(&body),
+            )
+            .await?;
+        let item = value["data"]["result"].clone();
+        if item["rating_value"].as_u64() != Some(u64::from(rating)) {
+            bail!("NTFY did not store the rating (item now has rating {})", item["rating_value"]);
+        }
+        Ok(item)
+    }
+
     /// Public menu of all diets for a day (`data` of the response).
     pub async fn diet_menu(&self, date: &str) -> Result<Value> {
         let query = [("expansions__in", MENU_EXPANSIONS.join(","))];

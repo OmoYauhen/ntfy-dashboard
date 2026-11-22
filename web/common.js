@@ -55,7 +55,7 @@ function dishDetails(d) {
 /// Shows which NTFY account the dashboard uses, or why it isn't connected, in the page header.
 async function setupAccount() {
   const s = await fetch("/api/session").then((r) => r.json()).catch(() => null);
-  if (!s || s.demo) return;
+  if (!s || s.demo || !$("account")) return;
   $("account-name").textContent = s.connected ? s.name || "" : `Not connected to NTFY: ${s.error || "logging in…"}`;
   $("account").classList.toggle("error", !s.connected);
   $("account").hidden = false;

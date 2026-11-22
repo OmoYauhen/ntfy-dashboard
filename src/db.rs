@@ -75,6 +75,7 @@ pub struct SyncStats {
 /// One archived meal (delivery item), as stored by the last sync that saw it.
 #[derive(Clone, Debug)]
 pub struct ArchivedMeal {
+    pub item_id: u64,
     pub date: String,
     pub meal_key: Option<String>,
     pub meal_name: Option<String>,
@@ -307,13 +308,14 @@ impl Db {
         let conn = self.0.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT date, meal_key, meal_name, position, product_id, user_selected, status, price, rating,
-                    rating_comment, alternative_ids, delivery_diet_id, delivery_json
+                    rating_comment, alternative_ids, delivery_diet_id, delivery_json, item_id
              FROM meals WHERE date BETWEEN ?1 AND ?2 ORDER BY date, position, item_id",
         )?;
         let rows = stmt.query_map([from, to], |r| {
             let alternatives: Option<String> = r.get(10)?;
             let delivery: String = r.get(12)?;
             Ok(ArchivedMeal {
+                item_id: r.get(13)?,
                 date: r.get(0)?,
                 meal_key: r.get(1)?,
                 meal_name: r.get(2)?,
@@ -332,6 +334,22 @@ impl Db {
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// The delivery a meal (delivery item) belongs to.
+    pub fn delivery_of(&self, item_id: u64) -> Result<Option<u64>> {
+        let conn = self.0.lock().unwrap();
+        Ok(conn.query_row("SELECT delivery_id FROM meals WHERE item_id = ?1", [item_id], |r| r.get(0)).optional()?)
+    }
+
+    /// Stores a rating the user just gave, before the next sync picks it up from NTFY.
+    pub fn record_rating(&self, item_id: u64, rating: u8, comment: Option<&str>) -> Result<()> {
+        let conn = self.0.lock().unwrap();
+        conn.execute(
+            "UPDATE meals SET rating = ?1, rating_comment = ?2 WHERE item_id = ?3",
+            params![rating, comment, item_id],
+        )?;
+        Ok(())
     }
 
     /// Archived dishes (raw NTFY products) by id; unknown ids are left out.
@@ -465,6 +483,12 @@ mod tests {
         assert_eq!(products.len(), 1);
         assert_eq!(products[&100]["name"], "Owsianka");
         assert_eq!(db.status().unwrap()["meals"], 1);
+        assert_eq!(meals[0].item_id, 10);
+        assert_eq!(db.delivery_of(10).unwrap(), Some(1));
+        assert_eq!(db.delivery_of(99).unwrap(), None);
+        db.record_rating(10, 4, Some("Pyszne")).unwrap();
+        let rated = &db.meals_between("2026-11-02", "2026-11-02").unwrap()[0];
+        assert_eq!((rated.rating, rated.rating_comment.as_deref()), (Some(4), Some("Pyszne")));
     }
 
     #[test]
