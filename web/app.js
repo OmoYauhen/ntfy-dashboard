@@ -21,17 +21,12 @@ function plannedDays(days) {
   const keep = days.filter((d, i) => hasMenu(d) || i === days.length - 1);
   return keep.map((d, i) => ({
     ...d,
-    meals: sortMeals(d.meals),
+    meals: sortMeals(d.meals, (m) => m.key),
     last: d === days.at(-1),
     gapBefore: i > 0 && days.indexOf(d) - days.indexOf(keep[i - 1]) > 1,
   }));
 }
 
-/// Meal rows: the main meals first, then the smaller ones (as on the kitchen screen). Meal types not
-/// listed keep NTFY's order, after these.
-const MEAL_ORDER = ["BREAKFAST", "LUNCH", "DINNER", "SECOND-BREAKFAST", "TEA", "SNACK"];
-const mealRank = (m) => { const i = MEAL_ORDER.indexOf(m.key); return i === -1 ? MEAL_ORDER.length : i; };
-const sortMeals = (meals) => [...meals].sort((a, b) => mealRank(a) - mealRank(b) || a.position - b.position);
 const msLeft = (day) => (day.change_deadline ? new Date(day.change_deadline) - Date.now() : Infinity);
 const isUrgent = (day) => day.editable && hasMenu(day) && !isPicked(day) && msLeft(day) < URGENT_MS;
 

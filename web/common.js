@@ -27,6 +27,15 @@ function toast(text, error = false) {
   toastTimer = setTimeout(() => (t.hidden = true), error ? 6000 : 2500);
 }
 
+/// Meal order on every page: the main meals first, then the smaller ones. Meal types not listed keep
+/// NTFY's order (their position), after these. `keyOf` reads the meal type (`key` in the planner's
+/// data, `meal_key` in the /api/v1 data).
+const MEAL_ORDER = ["BREAKFAST", "LUNCH", "DINNER", "SECOND-BREAKFAST", "TEA", "SNACK"];
+function sortMeals(meals, keyOf) {
+  const rank = (m) => { const i = MEAL_ORDER.indexOf(keyOf(m)); return i === -1 ? MEAL_ORDER.length : i; };
+  return [...meals].sort((a, b) => rank(a) - rank(b) || (a.position ?? 0) - (b.position ?? 0));
+}
+
 const imageUrl = (id, resolution = "MEDIUM") => (id ? `/img/${encodeURIComponent(id)}?r=${resolution}` : null);
 const round = (v, digits = 0) => (v == null ? null : Number(v).toFixed(digits).replace(/\.0+$/, ""));
 

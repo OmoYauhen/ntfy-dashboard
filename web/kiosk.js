@@ -52,7 +52,8 @@ async function load() {
       state.status = status;
       const t = status.today;
       const data = await getJson(`/api/v1/days?from=${addDays(t, -PAST_DAYS)}&to=${addDays(t, FUTURE_DAYS)}`);
-      state.days = data.days;
+      // Main meals first everywhere (Upcoming columns, Rate cards), as on Today.
+      state.days = data.days.map((d) => ({ ...d, meals: sortMeals(d.meals, (m) => m.meal_key) }));
       render();
     } catch (err) {
       if (!state.days.length) {
