@@ -128,6 +128,8 @@ reachable from a private network. The module listens on `127.0.0.1` by default.
 - The top strip lists upcoming days with how many meals are picked (`3/5`); locked days are dimmed.
   Days whose menu isn't published yet are left out, except the last delivery day (dashed, "last day"),
   so you can see how far the paid plan goes.
+- Meal rows go main meals first: Śniadanie, Obiad, Kolacja, then the smaller ones (II Śniadanie,
+  Podwieczorek, Przekąska), the same order as the kitchen screen.
 - A solid green tile is your choice. A dashed tile is the caterer's default, which you haven't confirmed.
 - Tiles show NTFY's community rating (★). Dishes you had before (from your archive, any calorie size) get an
   amber frame and a `had 2×` badge.
