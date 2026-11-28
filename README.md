@@ -115,8 +115,9 @@ reachable from a private network. The module listens on `127.0.0.1` by default.
 
 ## Planner
 
-- The top strip lists upcoming days with how many meals are picked (`3/5`). Locked days and days whose
-  menu isn't published yet are dimmed.
+- The top strip lists upcoming days with how many meals are picked (`3/5`); locked days are dimmed.
+  Days whose menu isn't published yet are left out, except the last delivery day (dashed, "last day"),
+  so you can see how far the paid plan goes.
 - A solid green tile is your choice. A dashed tile is the caterer's default, which you haven't confirmed.
 - Tiles show NTFY's community rating (★). Dishes you had before (from your archive, any calorie size) get an
   amber frame and a `had 2×` badge.
@@ -157,7 +158,9 @@ scrolls except in the rating list.
   apart. The next meal by time of day gets a gold frame and "UP NEXT", and meals already past are faded.
   When nothing is delivered today, it shows the next delivery instead. The top bar shows the clock, the day's
   kcal and macros, and when the archive last synced.
-- **Upcoming**: the next delivery days, a column each, flagging days whose choice locks within 48 hours.
+- **Upcoming**: the next delivery days with a published menu, a column each, flagging days whose choice
+  locks within 48 hours. The last delivery day comes last, marked "Last paid day", even before its menu
+  is out.
 - **Rate**: recent delivered meals. One tap on a star rates a meal in NTFY. **＋ Comment** adds one-tap
   Polish phrases (*Pyszne!*, *Za słone*, …) or free text. The tab badge counts meals still waiting for
   a rating while NTFY's rating window is open.

@@ -4,7 +4,8 @@
 // touch screen that shows this page fullscreen all day.
 
 const PAST_DAYS = 10;
-const FUTURE_DAYS = 21;
+/// Far enough ahead to see the last day of the paid plan.
+const FUTURE_DAYS = 60;
 const REFRESH_MS = 5 * 60 * 1000;
 const IDLE_MS = 2 * 60 * 1000;
 const WAKE_MS = 60 * 1000;
@@ -203,30 +204,36 @@ function mealCard(day, meal, isNext, isDone) {
 
 function renderUpcoming() {
   const t = today();
-  const days = state.days.filter((d) => d.date > t && d.status !== "cancelled").slice(0, 6);
-  if (!days.length) return el("div", { class: "empty" }, el("span", { class: "big" }, "Nothing planned yet"));
+  const future = state.days.filter((d) => d.date > t && d.status !== "cancelled");
+  if (!future.length) return el("div", { class: "empty" }, el("span", { class: "big" }, "Nothing planned yet"));
+  // Days with a published menu, plus the last delivery day so it's clear how far the paid plan goes.
+  const last = future.at(-1);
+  const published = future.filter((d) => d.menu_published && d !== last).slice(0, 5);
+  const gap = published.length && future.indexOf(last) - future.indexOf(published.at(-1)) > 1;
   return el("div", { style: "height:100%;display:flex;flex-direction:column" },
     title("Coming up", el("span", { class: "sub" }, "Tap a dish for details")),
-    el("div", { class: "upcoming", style: "flex:1;min-height:0" }, days.map(dayColumn)));
+    el("div", { class: "upcoming", style: "flex:1;min-height:0" },
+      published.map((d) => dayColumn(d)), dayColumn(last, { last: true, gap })));
 }
 
-function dayColumn(day) {
+function dayColumn(day, { last = false, gap = false } = {}) {
   const lockSoon = day.can_change && day.can_change_until && new Date(day.can_change_until) - Date.now() < 48 * 3600e3;
   const header = el("header", {},
     el("span", { class: "weekday" }, fmtDate(day.date, { weekday: "long" })),
     el("span", { class: "dmy" }, fmtDate(day.date, { day: "numeric", month: "short" })),
     el("div", { class: "meta" },
       day.menu_published ? el("span", { class: "total" }, el("b", {}, num(day.totals.kcal)), " kcal") : el("span", { class: "total" }, " "),
-      lockSoon ? el("span", { class: "pill gold" }, "Choose soon") : null));
+      last ? el("span", { class: "pill gold" }, "Last paid day") : lockSoon ? el("span", { class: "pill gold" }, "Choose soon") : null));
+  const cls = `day-col${day.menu_published ? "" : " unpublished"}${gap ? " gap" : ""}`;
   if (!day.menu_published) {
     // A publish date in the past means the menu is out and the next sync will bring it.
     const at = day.menu_published_at && new Date(day.menu_published_at);
     const text = at && at > Date.now()
       ? `Menu arrives ${fmtDate(day.menu_published_at.slice(0, 10), { weekday: "short", day: "numeric", month: "short" })}`
       : "Menu coming soon";
-    return el("section", { class: "day-col unpublished" }, header, el("ol", {}, text));
+    return el("section", { class: cls }, header, el("ol", {}, text));
   }
-  return el("section", { class: "day-col" }, header,
+  return el("section", { class: cls }, header,
     el("ol", {}, day.meals.map((m) => el("li", {},
       el("button", { class: "mini", onclick: () => m.dish && openDish(day, m) },
         el("img", { src: thumb(m.dish) || "", alt: "" }),
