@@ -14,6 +14,17 @@ const hasMenu = (day) => day.meals.some((m) => m.options.length);
 const isOpen = (day) => day.editable && hasMenu(day) && !isPicked(day);
 const pickedCount = (day) => day.meals.filter((m) => m.user_selected).length;
 const currentDay = () => state.days[state.current];
+
+/// Days whose menu isn't published yet are left out, except the last delivery day, which shows how
+/// far the paid plan goes. `last` marks that day; `gapBefore` marks days with hidden days before them.
+function plannedDays(days) {
+  const keep = days.filter((d, i) => hasMenu(d) || i === days.length - 1);
+  return keep.map((d, i) => ({
+    ...d,
+    last: d === days.at(-1),
+    gapBefore: i > 0 && days.indexOf(d) - days.indexOf(keep[i - 1]) > 1,
+  }));
+}
 const msLeft = (day) => (day.change_deadline ? new Date(day.change_deadline) - Date.now() : Infinity);
 const isUrgent = (day) => day.editable && hasMenu(day) && !isPicked(day) && msLeft(day) < URGENT_MS;
 
@@ -46,16 +57,16 @@ function renderDays() {
         "button",
         {
           class: [i === state.current && "current", isPicked(day) && "done", !(day.editable && hasMenu(day)) && "locked",
-            isUrgent(day) && "urgent", isNew(day) && "new"].filter(Boolean).join(" "),
-          title: [isNew(day) && "New menu.", !day.editable ? "Menu can no longer be changed"
+            isUrgent(day) && "urgent", isNew(day) && "new", day.last && "last", day.gapBefore && "gap"].filter(Boolean).join(" "),
+          title: [day.last && "Last paid delivery day.", isNew(day) && "New menu.", !day.editable ? "Menu can no longer be changed"
             : day.change_deadline ? `Can be changed for ${formatLeft(msLeft(day))} more` : ""].filter(Boolean).join(" "),
           onclick: () => show(i),
         },
         dateLabel(day.date, { weekday: "short", day: "numeric", month: "numeric" }),
         el("span", { class: "count" },
           !day.editable ? "locked"
-            : !hasMenu(day) ? "no menu"
-            : `${pickedCount(day)}/${day.meals.length}${isUrgent(day) ? ` · ${formatLeft(msLeft(day))}` : ""}`),
+            : !hasMenu(day) ? (day.last ? "last day" : "no menu")
+            : `${pickedCount(day)}/${day.meals.length}${isUrgent(day) ? ` · ${formatLeft(msLeft(day))}` : day.last ? " · last" : ""}`),
       ),
     ),
   );
@@ -213,12 +224,14 @@ function renderDay() {
   status.className = day.editable ? "" : "locked";
   if (!day.editable) status.textContent = "Menu locked for this day";
   else if (!hasMenu(day)) {
-    status.textContent = day.menu_from
+    // A publish date in the past means the menu is out and the next sync will bring it.
+    const upcoming = day.menu_from && new Date(day.menu_from) > Date.now();
+    status.textContent = (day.last ? "Last paid delivery day. " : "") + (upcoming
       ? `Menu not published yet, available from ${dateLabel(day.menu_from, { weekday: "long", day: "numeric", month: "long" })}`
-      : "Menu not published yet";
+      : "Menu coming soon");
   } else {
     const progress = isPicked(day) ? "All meals chosen" : `${pickedCount(day)} of ${day.meals.length} meals chosen`;
-    status.textContent = progress;
+    status.textContent = day.last ? `${progress} · last paid delivery day` : progress;
     if (day.change_deadline) {
       const at = new Date(day.change_deadline).toLocaleString(undefined,
         { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -338,7 +351,7 @@ async function load({ refresh = false } = {}) {
     const viewing = refresh ? currentDay()?.date : null;
     const row = state.row;
     const newMenus = refresh ? data.days.filter((d) => isNew(d) && !state.days.some((o) => o.date === d.date && hasMenu(o))) : [];
-    state.days = data.days;
+    state.days = plannedDays(data.days);
     if (!state.days.length) {
       msg.hidden = false;
       msg.textContent = "No upcoming deliveries with a menu to choose.";
