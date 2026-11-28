@@ -6,6 +6,14 @@ pick that dish. When all 5 meals of a day are picked, it moves on to the next op
 
 Rust (axum) backend that talks to the NTFY API. Plain HTML/CSS/JS frontend, embedded in the binary.
 
+![Kitchen screen: today's meals](docs/screenshots/kitchen-today.webp)
+
+| Planner | History |
+|---|---|
+| ![Planner: one row per meal, every option visible](docs/screenshots/planner.webp) | ![History: daily totals, averages and full details of every meal](docs/screenshots/history.webp) |
+
+The screenshots use demo data or NTFY's public menu; ratings, orders and diet names are made up.
+
 ## Development
 
 With Nix, `nix develop` gives a shell with Rust, clippy, rustfmt, rust-analyzer, sqlite and
@@ -115,6 +123,8 @@ reachable from a private network. The module listens on `127.0.0.1` by default.
 
 ## Planner
 
+![Dish details from the ⓘ button](docs/screenshots/planner-details.webp)
+
 - The top strip lists upcoming days with how many meals are picked (`3/5`); locked days are dimmed.
   Days whose menu isn't published yet are left out, except the last delivery day (dashed, "last day"),
   so you can see how far the paid plan goes.
@@ -150,8 +160,8 @@ choices you made here. It syncs at startup, every hour, whenever the planner loa
 ## Kitchen screen
 
 `/dashboard` is a kiosk page for a landscape touch screen that shows it fullscreen all day (built for
-a 17" Android panel). It's dark, photo-led and touch-sized, scales to any 16:9 resolution, and never
-scrolls except in the rating list.
+a 17" Android panel). It's light (high contrast suits budget panels), photo-led and touch-sized, scales to
+any 16:9 resolution, and never scrolls except in the rating list.
 
 - **Today**: breakfast, lunch and dinner as three large photo columns. The smaller meals (second
   breakfast or afternoon snack, then the snack) are stacked in a narrower fourth column, set slightly
@@ -167,6 +177,10 @@ scrolls except in the rating list.
 - Tapping any meal opens its photo, nutrition, allergens and ingredients.
 - It goes back to Today after 2 minutes without touch, reloads every 5 minutes, and dims from 22:00 to
   6:00 (a touch wakes it).
+
+| Upcoming | Rate | Details |
+|---|---|---|
+| ![Upcoming delivery days](docs/screenshots/kitchen-upcoming.webp) | ![Rating recent meals](docs/screenshots/kitchen-rate.webp) | ![Meal details](docs/screenshots/kitchen-details.webp) |
 
 ## API for assistants
 
