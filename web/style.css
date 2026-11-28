@@ -65,6 +65,13 @@ h1 { font-size: 18px; margin: 0; white-space: nowrap; }
   content: ""; position: absolute; top: 4px; right: 4px;
   width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
 }
+/* The last delivery day of the paid plan, kept even when its menu isn't out yet. */
+#days button.last { border-style: dashed; }
+#days button.last.locked { opacity: .9; }
+#days button.last .count { color: var(--accent); font-weight: 600; }
+/* Days without a published menu are hidden; leave a visible gap where they were. */
+#days button.gap { margin-left: 18px; position: relative; }
+#days button.gap::before { content: "⋯"; position: absolute; left: -15px; top: 50%; transform: translateY(-50%); color: var(--muted); }
 #days button.current { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 
 main { padding: 10px 20px 24px; }
