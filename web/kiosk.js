@@ -4,7 +4,7 @@
 // touch screen that shows this page fullscreen all day.
 
 const PAST_DAYS = 10;
-/// Far enough ahead to see the last day of the paid plan.
+/// How far ahead to load at least; it always goes on to the plan's last delivery day.
 const FUTURE_DAYS = 60;
 const REFRESH_MS = 5 * 60 * 1000;
 const IDLE_MS = 2 * 60 * 1000;
@@ -51,7 +51,10 @@ async function load() {
       const status = await getJson("/api/v1/status");
       state.status = status;
       const t = status.today;
-      const data = await getJson(`/api/v1/days?from=${addDays(t, -PAST_DAYS)}&to=${addDays(t, FUTURE_DAYS)}`);
+      // Load through the last archived delivery day, so "Last paid day" really is the plan's end.
+      const lastDay = status.archive?.last_day;
+      const to = lastDay && lastDay > addDays(t, FUTURE_DAYS) ? lastDay : addDays(t, FUTURE_DAYS);
+      const data = await getJson(`/api/v1/days?from=${addDays(t, -PAST_DAYS)}&to=${to}`);
       // Main meals first everywhere (Upcoming columns, Rate cards), as on Today.
       state.days = data.days.map((d) => ({ ...d, meals: sortMeals(d.meals, (m) => m.meal_key) }));
       render();
